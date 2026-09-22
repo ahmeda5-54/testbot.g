@@ -11,25 +11,36 @@ def _int_list(value: str) -> list[int]:
     return [int(x.strip()) for x in value.split(",") if x.strip()]
 
 
+def _int_env(name: str, default: int) -> int:
+    raw = os.getenv(name, "")
+    raw = (raw or "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "")
 ADMIN_IDS = _int_list(os.getenv("ADMIN_IDS", ""))
-CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
-DEADLINE_HOURS = int(os.getenv("DEADLINE_HOURS", "48"))
+CHANNEL_ID = _int_env("CHANNEL_ID", 0)
+DEADLINE_HOURS = _int_env("DEADLINE_HOURS", 48)
 DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "")
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")
-DASHBOARD_HOST = os.getenv("DASHBOARD_HOST", "127.0.0.1")
-DASHBOARD_PORT = int(os.getenv("DASHBOARD_PORT", "5000"))
+DASHBOARD_HOST = (os.getenv("DASHBOARD_HOST", "127.0.0.1") or "127.0.0.1").strip() or "127.0.0.1"
+DASHBOARD_PORT = _int_env("DASHBOARD_PORT", 5000)
 # Railway/paas: يستمع على المنفذ الذي يوفره النظام؛ نُجبر 0.0.0.0
 # دائماً (يتجاهل أي DASHBOARD_HOST قد يُترك محلياً بالخطأ في المتغيرات)
-RAILWAY_PORT = os.getenv("PORT")
+RAILWAY_PORT = (os.getenv("PORT") or "").strip()
 if RAILWAY_PORT:
     DASHBOARD_HOST = "0.0.0.0"
     DASHBOARD_PORT = int(RAILWAY_PORT)
 PROXY_URL = os.getenv("PROXY_URL", "").strip() or None
 
 # Telegram UserBot (Telethon) — optional, for syncing all group members
-TB_API_ID = int(os.getenv("TB_API_ID", "0") or "0")
+TB_API_ID = _int_env("TB_API_ID", 0)
 TB_API_HASH = os.getenv("TB_API_HASH", "").strip()
 TB_PHONE = "".join(os.getenv("TB_PHONE", "").split())
 TB_SESSION_DIR = BASE_DIR / "userbot"
