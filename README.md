@@ -73,11 +73,14 @@ python run.py
 
 ```bash
 cd /opt
-curl -L -o setup-server.sh https://raw.githubusercontent.com/omara424li761-crypto/testbot/master/deploy/setup-server.sh
+curl -L -o setup-server.sh https://raw.githubusercontent.com/ahmeda5-54/testbot.g/main/deploy/setup-server.sh
 bash setup-server.sh
 # عدّل .env ثم:
 systemctl start verifier-bot
 ```
+
+لوحة التحكم بعد ذلك على `http://<IP>:5000` — افتح المنفذ `5000` في قواعد جدار حماية السيرفر
+(عند Oracle: VCN → Security List → Ingress Rules → إضافة 0.0.0.0/0 للمنفذ 5000).
 
 بعد أي تعديل في الكود على جهازك (وتحديث نها للمستودع)، طبِّق التغيير على الخادم:
 

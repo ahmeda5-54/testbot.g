@@ -7,7 +7,7 @@
 # ============================================================
 set -euo pipefail
 
-REPO_URL="https://github.com/omara424li761-crypto/testbot.git"
+REPO_URL="https://github.com/ahmeda5-54/testbot.g.git"
 APP_DIR="/opt/verifier-bot"
 SERVICE="verifier-bot"
 PY_BIN="/opt/verifier-bot/.venv/bin/python"
