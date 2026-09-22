@@ -1,0 +1,6 @@
+aiogram==3.31.0
+aiohttp==3.9.5
+flask==3.0.3
+python-dotenv==1.0.1
+# optional, only needed for userbot_sync.py (group member enumeration)
+telethon==1.39.0

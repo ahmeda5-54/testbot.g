@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block title %}لوحة التحكم{% endblock %}
+{% block head %}<meta http-equiv="refresh" content="15">{% endblock %}
+
+{% block page_title %}لوحة التحكم — إدارة المشتركين والتحقق{% endblock %}
+
+{% block topbar_actions %}
+<div class="quick-actions">
+  <form class="quick-btn" method="post" action="{{ url_for('check_members_all') }}">
+    <button class="btn btn-check" type="submit">⚡ فحص حضور الجميع الآن</button>
+    <small class="quick-sub">آخر فحص كامل: {{ fmt(stats.last_full_check) if stats.last_full_check else 'لم يُفحص بعد' }}</small>
+  </form>
+  <form class="quick-btn" method="post" action="{{ url_for('post_message') }}"
+        onsubmit="return confirm('نشر وتثبيت رسالة التحقق في القناة؟');">
+    <button class="btn btn-post" type="submit" style="width:auto;">📢 نشر وتثبيت رسالة التحقق</button>
+    <small class="quick-sub">تُنشر في قناة المجموعة</small>
+  </form>
+</div>
+{% endblock %}
+
+{% block content %}
+<section class="stats-grid">
+  <div class="stat-card">
+    <h3>إجمالي المشتركين</h3>
+    <p>{{ counts['ALL'] }}</p>
+    <span class="stat-sub">أعضاء المجموعة: {{ stats.group_total if stats.group_total is not none else '—' }}</span>
+  </div>
+  <div class="stat-card warn">
+    <h3>طلبات جديدة / قيد المراجعة</h3>
+    <p>{{ counts['SUBMITTED'] }} / {{ counts['UNDER_REVIEW'] }}</p>
+    <span class="stat-sub">بانتظار قرار المشرف</span>
+  </div>
+  <div class="stat-card success">
+    <h3>مقبولون / مرفوضون</h3>
+    <p>{{ counts['VERIFIED'] }} / {{ counts['REJECTED'] }}</p>
+    <span class="stat-sub">داخل المجموعة الآن: {{ stats.in_group }}</span>
+  </div>
+  <div class="stat-card danger">
+    <h3>انتهت مهلتهم / غير مكتملين</h3>
+    <p>{{ counts['EXPIRED'] }} / {{ stats.incomplete }}</p>
+    <span class="stat-sub">لم يبدأوا (تقريبي): {{ stats.not_started if stats.not_started is not none else '—' }}</span>
+  </div>
+</section>
+
+<div class="filter-bar">
+  <input id="table-search" class="search-input" type="search"
+         placeholder="🔍 بحث سريع: الاسم أو @المعرف أو Telegram ID...">
+  <div class="pills">
+    {% for key, label in tabs %}
+      {% if key == 'roster' %}{% set c = counts['roster'] %}{% elif key == 'incomplete' %}{% set c = counts['incomplete'] %}{% elif key == 'all' %}{% set c = counts['ALL'] %}{% else %}{% set c = counts[key] %}{% endif %}
+      <a class="pill {{ 'active' if tab == key }}" href="{{ url_for('index', tab=key) }}">
+        {{ label }} <span class="pill-badge">{{ c }}</span>
+      </a>
+    {% endfor %}
+  </div>
+</div>
+
+{% if members %}
+<div class="table-wrap">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>الحالة</th>
+        <th>المستخدم</th>
+        <th>مكلم البوت؟</th>
+        <th>الحضور بالمجموعة</th>
+        <th>رقم الحساب</th>
+        <th>الوسيط</th>
+        <th>تاريخ الإرسال</th>
+        <th>انتهاء المهلة</th>
+        <th>سبب الرفض</th>
+        <th>إجراءات</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in members %}
+      <tr>
+        <td>
+          <span class="status" style="background: {{ STATUS_COLORS[m.status] }}">
+            {{ STATUS_LABELS[m.status] }}
+          </span>
+        </td>
+        <td>
+          <div class="user-cell">
+            <span class="user-name">{{ m.telegramName or '-' }}</span>
+            <span class="user-meta">
+              {% if m.telegramUsername %}
+                <button class="copy-btn" data-copy="{{ m.telegramUsername }}">@{{ m.telegramUsername }} ⧉</button>
+              {% else %}لا يوجد username{% endif %}
+              &nbsp;•&nbsp; <code>{{ m.telegramUserId }}</code>
+            </span>
+          </div>
+        </td>
+        <td>
+          {% if m.talkedToBot == 1 %}<span class="chip chip-ok">✅ مكلم</span>{% else %}<span class="chip chip-bad">❌ لم يكلم</span>{% endif %}
+        </td>
+        <td>
+          {% if m.inGroup == 1 %}<span class="chip chip-ok">موجود</span>
+          {% elif m.inGroup == 0 %}<span class="chip chip-bad">خارج</span>
+          {% else %}<span class="chip chip-neutral">غير محدد</span>{% endif %}
+        </td>
+        <td><code>{{ m.tradingAccountNumber or '—' }}</code></td>
+        <td>{{ m.brokerName or '—' }}</td>
+        <td>{{ fmt(m.submittedAt) }}</td>
+        <td>{{ fmt(m.deadlineAt) }}</td>
+        <td class="reason">{{ m.rejectionReason or '—' }}</td>
+        <td>
+          <div style="display:flex; gap:6px; flex-wrap:wrap;">
+            <a class="btn btn-sm btn-outline" href="{{ url_for('member_detail', user_id=m.telegramUserId) }}">التفاصيل</a>
+            {% if tab == 'roster' %}
+              {% if m.status != 'REMOVED' %}
+              <form method="post" action="{{ url_for('remove_from_chat', user_id=m.telegramUserId) }}"
+                    onsubmit="return confirm('حذف {{ m.telegramName or m.telegramUserId }} من المجموعة؟');">
+                <input type="hidden" name="next" value="{{ url_for('index', tab='roster') }}">
+                <button class="btn btn-danger btn-sm">حذف من المجموعة</button>
+              </form>
+              {% else %}
+              <span class="chip chip-neutral">مُزال</span>
+              {% endif %}
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="empty">لا توجد سجلات في هذا التبويب.</p>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+const searchBox = document.getElementById('table-search');
+if (searchBox) {
+  searchBox.addEventListener('input', () => {
+    const q = searchBox.value.trim().toLowerCase();
+    document.querySelectorAll('.data-table tbody tr').forEach(row => {
+      row.style.display = row.textContent.toLowerCase().includes(q) ? '' : 'none';
+    });
+  });
+}
+</script>
+{% endblock %}

@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}رسائل الدعم{% endblock %}
+
+{% block page_title %}رسائل الدعم — مراسلة الأعضاء{% endblock %}
+{% block topbar_actions %}
+<a class="btn btn-outline" href="{{ url_for('index') }}">↩ رجوع للوحة</a>
+{% endblock %}
+
+{% block content %}
+<section class="stats-grid">
+  <div class="stat-card">
+    <h3>كل الرسائل</h3>
+    <p>{{ types[0][2] }}</p>
+    <span class="stat-sub">من زر «تواصل مع الدعم» في المجموعة</span>
+  </div>
+  <div class="stat-card warn">
+    <h3>بانتظار الرد</h3>
+    <p>{{ statuses[1][2] }}</p>
+    <span class="stat-sub">جديدة لم يصلها رد بعد</span>
+  </div>
+  <div class="stat-card success">
+    <h3>تم الرد عليها</h3>
+    <p>{{ statuses[2][2] }}</p>
+    <span class="stat-sub">أُرسل إليها رد</span>
+  </div>
+</section>
+
+<div class="filter-bar">
+  <div class="pills">
+    {% for key, label, c in types %}
+      <a class="pill {{ 'active' if msg_type == key }}" href="{{ url_for('support_page', type=key, status=status) }}">
+        {{ label }} <span class="pill-badge">{{ c }}</span>
+      </a>
+    {% endfor %}
+  </div>
+  <div class="pills">
+    {% for key, label, c in statuses %}
+      <a class="pill {{ 'active' if status == key }}" href="{{ url_for('support_page', type=msg_type, status=key) }}">
+        {{ label }} <span class="pill-badge">{{ c }}</span>
+      </a>
+    {% endfor %}
+  </div>
+  <div class="pills">
+    <form class="inline-form" method="post" action="{{ url_for('support_cleanup_old') }}"
+          onsubmit="return confirm('حذف الرسائل المُجاب عنها الأقدم من عدد الأيام؟');">
+      <label for="cleanup-days" style="font-size:12px; color:var(--muted);">حذف المُجاب عنها الأقدم من</label>
+      <input type="number" id="cleanup-days" name="days" value="30" min="1" max="365" style="width:70px;">
+      <button class="btn btn-sm" type="submit">🗑 تنظيف</button>
+    </form>
+  </div>
+</div>
+
+{% if total_pages > 1 %}
+<nav class="pagination">
+  {% if page > 1 %}
+  <a class="pill" href="{{ url_for('support_page', type=msg_type, status=status, page=page-1) }}">→ السابق</a>
+  {% endif %}
+  <span class="page-info">صفحة {{ page }} من {{ total_pages }} ({{ total }} رسالة)</span>
+  {% if page < total_pages %}
+  <a class="pill" href="{{ url_for('support_page', type=msg_type, status=status, page=page+1) }}">التالي ←</a>
+  {% endif %}
+</nav>
+{% endif %}
+
+{% if msgs %}
+{% for m in msgs %}
+<section class="card" id="msg-{{ m.id }}" style="border-inline-start: 4px solid {{ 'var(--warn)' if m.status == 'new' else 'var(--success)' }};">
+  <div class="card-head">
+    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+      <span class="chip {{ 'chip-warn' if m.status == 'new' else 'chip-ok' }}">
+        {{ 'جديدة' if m.status == 'new' else 'تم الرد' }}
+      </span>
+      <span class="chip chip-neutral">{{ m.msgType }}</span>
+      <small style="color:var(--muted)">{{ fmt(m.createdAt) }}</small>
+    </div>
+    <div class="card-head-actions">
+      <div class="user-cell">
+        <span class="user-name">{{ m.telegramName or '-' }}</span>
+        <span class="user-meta">
+          {% if m.telegramUsername %}@{{ m.telegramUsername }} · {% endif %}
+          <code>{{ m.telegramUserId }}</code>
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <p class="channel-preview" style="white-space:pre-wrap; margin-bottom:14px;">{{ m.message }}</p>
+
+  {% if m.status == 'replied' and m.adminReply %}
+  <div class="flash success" style="margin-bottom:12px;">
+    <div style="opacity:.75; font-size:12px; margin-bottom:3px;">ردك الذي أُرسل ({{ fmt(m.repliedAt) }}):</div>
+    {{ m.adminReply }}
+  </div>
+  {% endif %}
+
+  <form class="note-form" method="post" action="{{ url_for('support_reply', msg_id=m.id) }}">
+    <label for="reply-{{ m.id }}">{% if m.status == 'new' %}كتابة الرد وإرساله إلى العضو{% else %}رد إضافي إلى العضو{% endif %}</label>
+    <textarea id="reply-{{ m.id }}" name="reply" rows="2" placeholder="اكتب الرد هنا... سيُرسل مباشرة إلى العضو"></textarea>
+    <button class="btn" type="submit">📨 إرسال الرد إلى العضو</button>
+  </form>
+
+  <form method="post" action="{{ url_for('support_delete', msg_id=m.id) }}"
+        onsubmit="return confirm('حذف هذه الرسالة نهائياً؟');">
+    <button class="btn btn-danger btn-sm" type="submit">🗑 حذف الرسالة</button>
+  </form>
+</section>
+{% endfor %}
+{% else %}
+<p class="empty">لا توجد رسائل دعم في هذا النطاق.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,15 @@
+[Unit]
+Description=Telegram Verification Bot (dashboard + bot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/verifier-bot
+ExecStart=/opt/verifier-bot/.venv/bin/python /opt/verifier-bot/supervisor.py
+Restart=always
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

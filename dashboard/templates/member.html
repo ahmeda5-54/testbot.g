@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% block title %}تفاصيل المشترك{% endblock %}
+
+{% block page_title %}تفاصيل المشترك{% endblock %}
+{% block topbar_actions %}
+<a class="btn btn-outline" href="{{ url_for('index') }}">↩ رجوع للقائمة</a>
+{% endblock %}
+
+{% block content %}
+<main class="detail">
+  <div class="detail-main">
+    <section class="card">
+      <div class="card-head">
+        <span class="status" style="background: {{ STATUS_COLORS[member.status] }}">
+          {{ STATUS_LABELS[member.status] }}
+        </span>
+        <div class="card-head-actions">
+          {% if member.telegramUsername %}
+          <button class="copy-btn" data-copy="{{ member.telegramUsername }}">نسخ Username ⧉</button>
+          <a class="btn btn-sm btn-outline" href="https://t.me/{{ member.telegramUsername }}" target="_blank">فتح محادثة</a>
+          {% else %}
+          <a class="btn btn-sm btn-outline" href="tg://user?id={{ member.telegramUserId }}" target="_blank">فتح محادثة</a>
+          {% endif %}
+          <a class="btn btn-sm btn-outline" href="tg://user?id={{ member.telegramUserId }}" target="_blank">Telegram ID: {{ member.telegramUserId }}</a>
+        </div>
+      </div>
+
+      <dl class="fields">
+        <div><dt>الاسم</dt><dd>{{ member.telegramName or '-' }}</dd></div>
+        <div><dt>Username</dt><dd>{{ '@' + member.telegramUsername if member.telegramUsername else '-' }}</dd></div>
+        <div><dt>Telegram ID</dt><dd><code>{{ member.telegramUserId }}</code></dd></div>
+        <div><dt>رقم حساب التداول</dt><dd>{{ member.tradingAccountNumber or '-' }}</dd></div>
+        <div><dt>شركة الوساطة</dt><dd>{{ member.brokerName or '-' }}</dd></div>
+        <div><dt>السيرفر</dt><dd>{{ member.serverName or '-' }}</dd></div>
+        <div><dt>تاريخ الإرسال</dt><dd>{{ fmt(member.submittedAt) }}</dd></div>
+        <div><dt>انتهاء المهلة</dt><dd>{{ fmt(member.deadlineAt) }}</dd></div>
+        <div><dt>تاريخ المراجعة</dt><dd>{{ fmt(member.reviewedAt) }}</dd></div>
+        <div><dt>سبب الرفض</dt><dd class="reason">{{ member.rejectionReason or '-' }}</dd></div>
+      </dl>
+    </section>
+
+    <section class="card">
+      <h3>تعديل بيانات الطلب</h3>
+      <form class="note-form" style="border-top:none; padding-top:0;" method="post" action="{{ url_for('edit_member', user_id=member.telegramUserId) }}">
+        <label for="telegram_name">الاسم</label>
+        <input id="telegram_name" name="telegram_name" value="{{ member.telegramName or '' }}">
+        <label for="telegram_username">Username</label>
+        <input id="telegram_username" name="telegram_username" value="{{ member.telegramUsername or '' }}">
+        <div class="kv" style="grid-template-columns:1fr 1fr; display:grid; gap:10px;">
+          <div style="display:block;">
+            <label for="trading_account">رقم حساب التداول</label>
+            <input id="trading_account" name="trading_account" value="{{ member.tradingAccountNumber or '' }}">
+          </div>
+          <div style="display:block;">
+            <label for="broker">شركة الوساطة</label>
+            <input id="broker" name="broker" value="{{ member.brokerName or '' }}">
+          </div>
+          <div style="display:block;">
+            <label for="server">السيرفر</label>
+            <input id="server" name="server" value="{{ member.serverName or '' }}">
+          </div>
+        </div>
+        <button class="btn" type="submit">حفظ التعديلات</button>
+      </form>
+    </section>
+
+    <section class="card">
+      <h3>الملاحظة الإدارية</h3>
+      <form class="note-form" style="border-top:none; padding-top:0;" method="post" action="{{ url_for('save_note', user_id=member.telegramUserId) }}">
+        <textarea id="note" name="note" rows="3">{{ member.adminNote or '' }}</textarea>
+        <button class="btn" type="submit">حفظ الملاحظة</button>
+      </form>
+    </section>
+  </div>
+
+  <aside class="detail-side">
+    <section class="card">
+      <h3>الحالة والتحقق</h3>
+      <div class="kv">
+        <div><span>الحالة</span><strong>{{ STATUS_LABELS[member.status] }}</strong></div>
+        <div><span>مكلم البوت؟</span><strong>{% if member.talkedToBot == 1 %}<span class="chip chip-ok">✅ مكلم</span>{% else %}<span class="chip chip-bad">❌ لم يكلم</span>{% endif %}</strong></div>
+        <div><span>الحضور بالمجموعة</span><strong>{% if member.inGroup == 1 %}<span class="chip chip-ok">موجود</span>{% elif member.inGroup == 0 %}<span class="chip chip-bad">غير موجود</span>{% else %}<span class="chip chip-neutral">غير محدد</span>{% endif %}</strong></div>
+        <div><span>آخر فحص حضور</span><strong>{{ fmt(member.lastCheckedAt) }}</strong></div>
+        <div><span>تاريخ الإرسال</span><strong>{{ fmt(member.submittedAt) }}</strong></div>
+        <div><span>انتهاء المهلة</span><strong>{{ fmt(member.deadlineAt) }}</strong></div>
+        {% if member.deadlineAt and member.status not in ['VERIFIED', 'REMOVED'] %}
+        <div class="countdown-wrap">
+          <span>الوقت المتبقي</span>
+          <strong class="countdown" data-deadline="{{ member.deadlineAt }}">—</strong>
+        </div>
+        {% endif %}
+      </div>
+    </section>
+
+    <section class="card actions">
+      <h3>الإجراءات</h3>
+      <div class="actions-grid">
+        {% if member.status in ['SUBMITTED', 'UNDER_REVIEW'] %}
+        <form method="post" action="{{ url_for('approve', user_id=member.telegramUserId) }}">
+          <button class="btn btn-success">✔ قبول</button>
+        </form>
+        {% endif %}
+
+        {% if member.status == 'SUBMITTED' %}
+        <form method="post" action="{{ url_for('start_review', user_id=member.telegramUserId) }}">
+          <button class="btn btn-review">بدء المراجعة</button>
+        </form>
+        {% endif %}
+
+        {% if member.status in ['SUBMITTED', 'UNDER_REVIEW', 'PENDING', 'EXPIRED'] %}
+        <form method="post" action="{{ url_for('request_photo', user_id=member.telegramUserId) }}">
+          <button class="btn">طلب صورة جديدة</button>
+        </form>
+        <form method="post" action="{{ url_for('extend', user_id=member.telegramUserId) }}">
+          <button class="btn">تمديد المهلة</button>
+        </form>
+        {% endif %}
+
+        {% if member.status in ['REJECTED', 'EXPIRED', 'VERIFIED'] %}
+        <form method="post" action="{{ url_for('mark_removed', user_id=member.telegramUserId) }}"
+              onsubmit="return confirm('تعليم كمُزال يدوياً من القناة؟');">
+          <button class="btn btn-outline">تعليم كإزالة يدوية</button>
+        </form>
+        {% endif %}
+
+        {% if member.status != 'REMOVED' %}
+        <form method="post" action="{{ url_for('remove_from_chat', user_id=member.telegramUserId) }}"
+              onsubmit="return confirm('حذف هذا العضو من المجموعة بواسطة البوت؟');">
+          <button class="btn btn-danger">حذف من المجموعة</button>
+        </form>
+        {% endif %}
+
+        <form method="post" action="{{ url_for('check_member_now', user_id=member.telegramUserId) }}">
+          <button class="btn btn-check">فحص وجوده بالقناة 🔍</button>
+        </form>
+
+        {% if member.status not in ['REMOVED'] %}
+        <form method="post" action="{{ url_for('delete_record', user_id=member.telegramUserId) }}"
+              onsubmit="return confirm('⚠️ حذف السجل نهائياً؟ سيبقى العضو في المجموعة لكن تُمسح كل بياناته ويمكنه البدء من جديد عند الضغط على /start. متابعة؟');">
+          <button class="btn btn-danger btn-delete-record">🗑 حذف السجل والبدء من جديد</button>
+        </form>
+        {% endif %}
+      </div>
+
+      {% if member.status in ['SUBMITTED', 'UNDER_REVIEW'] %}
+      <form class="reject-form" method="post" action="{{ url_for('reject', user_id=member.telegramUserId) }}">
+        <label for="reason">سبب الرفض</label>
+        <textarea id="reason" name="reason" rows="2" required placeholder="اكتب سبب الرفض..."></textarea>
+        <button class="btn btn-danger" type="submit"
+                onclick="return confirm('تأكيد رفض هذا الطلب؟');">✖ رفض</button>
+      </form>
+      {% endif %}
+    </section>
+  </aside>
+</main>
+
+{% if member.balanceImageUrl %}
+<section class="card">
+  <div class="card-head">
+    <h3 style="margin:0;">صورة الرصيد</h3>
+    <a class="btn btn-outline btn-sm" href="{{ url_for('uploads', filename=member.balanceImageUrl) }}" target="_blank">فتح بحجم كامل ↗</a>
+  </div>
+  <a href="{{ url_for('uploads', filename=member.balanceImageUrl) }}" target="_blank">
+    <img src="{{ url_for('uploads', filename=member.balanceImageUrl) }}" alt="balance" style="max-width:100%; max-height:420px; border:1px solid var(--border); border-radius:12px;">
+  </a>
+</section>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+const cd = document.querySelector('.countdown');
+if (cd) {
+  const deadline = Date.parse(cd.dataset.deadline);
+  const pad = n => String(n).padStart(2, '0');
+  function tick() {
+    const diff = deadline - Date.now();
+    if (diff <= 0) { cd.textContent = 'انتهت المهلة'; return; }
+    const d = Math.floor(diff / 86400000);
+    const h = Math.floor((diff % 86400000) / 3600000);
+    const m = Math.floor((diff % 3600000) / 60000);
+    const s = Math.floor((diff % 60000) / 1000);
+    cd.textContent = (d ? d + ' يوم ' : '') + pad(h) + ':' + pad(m) + ':' + pad(s);
+  }
+  tick();
+  setInterval(tick, 1000);
+}
+</script>
+{% endblock %}

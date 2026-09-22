@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}لوحة التحكم{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  {% block head %}{% endblock %}
+</head>
+<body>
+<div class="app-shell">
+  {% set cur_tab = request.args.get('tab', 'all') %}
+  {% if request.endpoint == 'notifications' or request.endpoint == 'broadcast' %}
+    {% set active_nav = 'notifications' %}
+  {% elif request.endpoint in ('support_page', 'support_reply', 'support_delete') %}
+    {% set active_nav = 'support' %}
+  {% elif request.endpoint in ('settings_page', 'save_general_settings', 'save_userbot_settings', 'run_userbot_sync', 'list_userbot_groups', 'restart_app') %}
+    {% set active_nav = 'settings' %}
+  {% elif request.endpoint == 'index' and cur_tab == 'all' %}
+    {% set active_nav = 'dashboard' %}
+  {% elif request.endpoint in ('index', 'member_detail') %}
+    {% set active_nav = 'members' %}
+  {% else %}
+    {% set active_nav = '' %}
+  {% endif %}
+
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-mark">V</div>
+      <div>
+        <div class="brand-name">لوحة التحقق</div>
+        <div class="brand-sub">Verification Dashboard</div>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <a class="nav-link {{ 'active' if active_nav == 'dashboard' }}" href="{{ url_for('index') }}">
+        <span class="nav-ic">📊</span> لوحة الإحصائيات العامة
+      </a>
+      <a class="nav-link {{ 'active' if active_nav == 'members' }}" href="{{ url_for('index', tab='submitted') }}">
+        <span class="nav-ic">👥</span> إدارة المشتركين والطلبات
+      </a>
+      <a class="nav-link {{ 'active' if active_nav == 'support' }}" href="{{ url_for('support_page') }}">
+        <span class="nav-ic">🛟</span> رسائل الدعم
+        {% if support_new %}
+        <span class="pill-badge nav-badge">{{ support_new }}</span>
+        {% endif %}
+      </a>
+      <a class="nav-link {{ 'active' if active_nav == 'settings' }}" href="{{ url_for('settings_page') }}">
+        <span class="nav-ic">⚙️</span> إعدادات البوت والتحقق
+      </a>
+      <a class="nav-link {{ 'active' if active_nav == 'notifications' }}" href="{{ url_for('notifications') }}">
+        <span class="nav-ic">📢</span> الإشعارات العامة
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="online">
+        <span class="dot {{ 'dot-ok' if bot_online else 'dot-bad' }}"></span>
+        <div>
+          <strong>{{ 'البوت متصل' if bot_online else 'البوت غير متصل' }}</strong>
+          <small>آخر نشاط: {{ bot_last_seen }}</small>
+        </div>
+      </div>
+      <a class="logout-link" href="{{ url_for('logout') }}">↩ تسجيل الخروج</a>
+    </div>
+  </aside>
+  <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
+  <div class="main-area">
+    <header class="topbar">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <button class="menu-toggle" id="menu-toggle" type="button">☰</button>
+        <h1>{% block page_title %}لوحة التحكم{% endblock %}</h1>
+      </div>
+      <div class="topbar-actions">{% block topbar_actions %}{% endblock %}</div>
+    </header>
+
+    <div class="content">
+      <div class="flash-wrap">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% for category, message in messages %}
+            <div class="flash {{ category }}">{{ message }}</div>
+          {% endfor %}
+        {% endwith %}
+      </div>
+      {% block content %}{% endblock %}
+    </div>
+  </div>
+</div>
+
+<script>
+document.querySelectorAll('.copy-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    navigator.clipboard.writeText(btn.dataset.copy).then(() => {
+      const old = btn.textContent;
+      btn.textContent = 'تم النسخ ✓';
+      setTimeout(() => btn.textContent = old, 1200);
+    });
+  });
+});
+const sidebar = document.getElementById('sidebar');
+const backdrop = document.getElementById('sidebar-backdrop');
+document.getElementById('menu-toggle').addEventListener('click', () => {
+  sidebar.classList.toggle('open');
+  backdrop.classList.toggle('show');
+});
+backdrop.addEventListener('click', () => {
+  sidebar.classList.remove('open');
+  backdrop.classList.remove('show');
+});
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

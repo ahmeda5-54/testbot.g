@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}الإشعارات العامة{% endblock %}
+
+{% block page_title %}الإشعارات العامة — إرسال رسالة لكل المشتركين{% endblock %}
+{% block topbar_actions %}
+<a class="btn btn-outline" href="{{ url_for('index') }}">↩ رجوع للوحة</a>
+{% endblock %}
+
+{% block content %}
+<section class="stats-grid">
+  <div class="stat-card">
+    <h3>إجمالي المشتركين</h3>
+    <p>{{ total }}</p>
+    <span class="stat-sub">الذين سيصلهم الإشعار حسب النطاق المحدد</span>
+  </div>
+  <div class="stat-card warn">
+    <h3>لم يكملوا التحقق</h3>
+    <p>{{ counts['NOT_STARTED'] + counts['PENDING'] }}</p>
+    <span class="stat-sub">NOT_STARTED + PENDING</span>
+  </div>
+  <div class="stat-card success">
+    <h3>مقبولون</h3>
+    <p>{{ counts['VERIFIED'] }}</p>
+    <span class="stat-sub">يمكن استثناؤهم من النطاق</span>
+  </div>
+  <div class="stat-card danger">
+    <h3>مرفوضون / منتهية مهلتهم</h3>
+    <p>{{ counts['REJECTED'] + counts['EXPIRED'] }}</p>
+    <span class="stat-sub">REJECTED + EXPIRED</span>
+  </div>
+</section>
+
+<form class="card settings-form" method="post" action="{{ url_for('broadcast') }}"
+      onsubmit="return confirm('إرسال هذا الإشعار للنطاق المحدد؟');">
+  <p class="settings-hint">
+    أرسل رسالة نصية واحدة لكل المشتركين في النطاق المحدد. يُرسل في الخلفية ببطء
+    (حسب حدود تلغرامي) ولن تُغلق الصفحة.
+  </p>
+
+  <label for="message">نص الإشعار</label>
+  <textarea id="message" name="message" rows="7"
+            required placeholder="اكتب رسالة الإشعار هنا...&#10;مثال: ⏰ تذكير: مهلة التحقق تنتهي خلال ساعات قليلة، أرسل صورة الرصيد الآن."></textarea>
+
+  <label for="scope">النطاق (من يستلم الإشعار)</label>
+  <select id="scope" name="scope">
+    <option value="all">الجميع ({{ total }} مشترك)</option>
+    <option value="pending">الذين لم يكملوا فقط (NOT_STARTED + PENDING)</option>
+    <option value="unverified">الجميع ما عدا المقبولون والمُزالون</option>
+  </select>
+
+  <button class="btn btn-check" type="submit">📢 إرسال الإشعار الآن</button>
+  <p class="settings-hint">
+    ملاحظة: الإرسال يتم عبر البوت مباشرةً لكل عضو. تأكد أن البوت ما زال متصل
+    (الحالة في الشريط الجانبي) قبل الضغط.
+  </p>
+</form>
+{% endblock %}

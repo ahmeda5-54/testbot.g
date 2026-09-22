@@ -1,0 +1,8 @@
+.env
+data/
+uploads/
+userbot/
+__pycache__/
+*.pyc
+.venv/
+venv/

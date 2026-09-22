@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+{% block title %}الإعدادات{% endblock %}
+
+{% block page_title %}إعدادات البوت والتحقق{% endblock %}
+{% block topbar_actions %}
+<a class="btn btn-outline" href="{{ url_for('index') }}">↩ رجوع للوحة</a>
+{% endblock %}
+
+{% block content %}
+<h3 class="settings-section-title">الإعدادات العامة (البوت والمجموعة)</h3>
+<form class="card settings-form" method="post" action="{{ url_for('save_general_settings') }}">
+  <p class="settings-hint">
+    حدد هنا بيانات الروبوت والمجموعة الجديدة. بعد الحفظ يُعاد تشغيل النظام تلقائياً.
+    الحساب الشخصي (أدناه) هو من يفصل أسماء الأعضاء من <strong>معرف المجموعة أعلاه</strong>.
+  </p>
+  <label>توكن البوت (من @BotFather)</label>
+  <input type="password" dir="ltr" name="bot_token" value="{{ env.get('BOT_TOKEN', '') }}" placeholder="123456:ABC...">
+  <label>يوزرنيم البوت (بدون @)</label>
+  <input type="text" dir="ltr" name="bot_username" value="{{ env.get('BOT_USERNAME', '') }}" placeholder="boottest01ali_bot">
+  <label>معرف المجموعة/القناة CHANNEL_ID (رقم سالب غالباً)</label>
+  <input type="text" dir="ltr" name="channel_id" value="{{ env.get('CHANNEL_ID', '') }}" placeholder="-1001234567890">
+  <label>معرفات الأدمن (تفصل بفواصل)</label>
+  <input type="text" dir="ltr" name="admin_ids" value="{{ env.get('ADMIN_IDS', '') }}" placeholder="6245672130,111222333">
+  <label>مهلة التحقق بالساعات</label>
+  <input type="number" dir="ltr" name="deadline_hours" value="{{ env.get('DEADLINE_HOURS', '48') }}">
+  <label>بروكسي (اختياري، مثل socks5://127.0.0.1:1080)</label>
+  <input type="text" dir="ltr" name="proxy_url" value="{{ env.get('PROXY_URL', '') }}" placeholder="اختياري">
+  <button class="btn btn-check" type="submit">حفظ وإعادة تشغيل النظام</button>
+</form>
+<form class="card settings-form" method="post" action="{{ url_for('restart_app') }}" onsubmit="return confirm('إعادة تشغيل النظام الآن؟');">
+  <p class="settings-hint">لإعادة تشغيل البوت واللوحة دون تغيير الإعدادات.</p>
+  <button class="btn" type="submit">🔄 إعادة تشغيل النظام فقط</button>
+</form>
+
+<h3 class="settings-section-title">حقول التحقق</h3>
+<form class="card settings-form" method="post" action="{{ url_for('settings_page') }}">
+  <p class="settings-hint">
+    حدد البيانات التي يجب على المشترك إرسالها بالتسلسل للتحقق. تغيير الإعدادات
+    ينعكس فوراً على أسئلة البوت وعلى رسالة القناة عند نشرها.
+  </p>
+  {% for key, label in fields %}
+  <label class="check-row">
+    <input type="checkbox" name="{{ key }}" {% if current.get(key, '1') == '1' %}checked{% endif %}>
+    <span>{{ label }}</span>
+  </label>
+  {% endfor %}
+  <label>مدة صلاحية رابط دخول المجموعة المرسل عند القبول</label>
+  <div style="display:flex; gap:8px; align-items:center;" dir="ltr">
+    <input type="number" min="0" name="invite_link_value" value="{{ invite_value }}" style="flex:1" id="invite_link_value">
+    <select name="invite_link_unit" id="invite_link_unit" style="flex:1">
+      <option value="m" {% if invite_unit == 'm' %}selected{% endif %}>دقيقة</option>
+      <option value="h" {% if invite_unit == 'h' %}selected{% endif %}>ساعة</option>
+      <option value="d" {% if invite_unit == 'd' %}selected{% endif %}>يوم</option>
+    </select>
+  </div>
+  <p class="settings-hint">0 = رابط دائم. يسمح تلغرام بأنصاف المدد دقائق/ساعات وحتى 30 يوماً كحد أقصى — ويعمل مع القنوات الخاصة أيضاً.</p>
+  <button class="btn" type="submit">حفظ الإعدادات</button>
+</form>
+
+<h3 class="settings-section-title">الحساب الشخصي لسحب الأسماء (UserBot)</h3>
+<section class="card settings-form">
+  <p class="settings-hint">
+    البوت (Bot API) لا يستطيع سحب قائمة جميع الأعضاء. هذه الأداة تستخدم حسابك
+    التلغرامي الشخصي. البيانات من
+    <a href="https://my.telegram.org/apps" target="_blank">my.telegram.org/apps</a>.
+    سيسحب الأعضاء من المجموعة المعرفة في «الإعدادات العامة» أعلاه.
+  </p>
+  <form method="post" action="{{ url_for('save_userbot_settings') }}">
+    <label>api_id</label>
+    <input type="text" dir="ltr" name="userbot_api_id" value="{{ env.get('TB_API_ID', '') }}" placeholder="123456">
+    <label>api_hash</label>
+    <input type="text" dir="ltr" name="userbot_api_hash" value="{{ env.get('TB_API_HASH', '') }}">
+    <label>رقم الهاتف (بالصيغة الدولية، اختياري)</label>
+    <input type="text" dir="ltr" name="userbot_phone" value="{{ env.get('TB_PHONE', '') }}" placeholder="9647xxxxxxxx">
+    <label>اسم الجلسة (غيّره عند التبديل لحساب شخصي جديد)</label>
+    <input type="text" dir="ltr" name="userbot_session_name" value="{{ env.get('TB_SESSION_NAME', 'members_session') }}">
+    <button class="btn" type="submit">حفظ بيانات السحب</button>
+  </form>
+
+  <h4 class="ub-steps-title">📋 خطوات تسجيل حساب شخصي جديد (أول مرة فقط)</h4>
+  <ol id="ub-steps" class="settings-hint">
+    <li>من <a href="https://my.telegram.org/apps" target="_blank">my.telegram.org/apps</a> خذ api_id و api_hash للحساب الجديد.</li>
+    <li>عبّي الحقول أعلاه (api_id و api_hash ورقم الهاتف) واضغط «حفظ بيانات السحب».</li>
+    <li>انسخ الأوامر ثم اضغط Enter بعد كل أمر:</li>
+  </ol>
+  <pre id="ub-commands" class="channel-preview" dir="ltr">cd /d {{ base_dir }}
+python userbot_sync.py</pre>
+  <ol start="4" class="settings-hint">
+    <li>لما يظهر سؤال كود التفعيل: ضع الكود الذي يصل على تلغرام ثم Enter.</li>
+    <li>إذا طلب كلمة مرور الحساب (2FA): أدخلها ثم Enter.</li>
+    <li>لما تخلص، ارجع للوحة واضغط «🧲 سحب أعضاء المجموعة الآن».</li>
+  </ol>
+  <p class="settings-hint">
+    ملاحظة: إذا غيّرت «اسم الجلسة» في الحقول أعلاه، استخدم اسمه في الأمر كالتالي:
+    <code dir="ltr">python userbot_sync.py --session {{ env.get('TB_SESSION_NAME', 'members_session') }}</code>
+  </p>
+  <div class="ub-copy-row">
+    <button class="btn btn-sm" type="button" onclick="copyCommands(this)">📋 نسخ الأوامر</button>
+    <button class="btn btn-sm" type="button" onclick="copySteps(this)">📋 نسخ الخطوات كاملة</button>
+  </div>
+
+  {% if session_exists %}
+  <form method="post" action="{{ url_for('run_userbot_sync') }}">
+    <button class="btn btn-check" type="submit">🧲 سحب أعضاء المجموعة (الحالية من الإعدادات العامة)</button>
+  </form>
+  <form method="post" action="{{ url_for('list_userbot_groups') }}">
+    <button class="btn" type="submit">👀 عرض مجموعاتي (اختر أي مجموعة تسحب منها)</button>
+  </form>
+  {% else %}
+  <div class="card settings-form">
+    <h4 class="ub-steps-title">🔑 تسجيل الدخول بالحساب الجديد (مرة واحدة فقط)</h4>
+    <p class="settings-hint">
+      تأكد أولاً أنك عدّلت: <strong>api_id / api_hash</strong> و<strong>رقم الهاتف</strong>
+      للحساب الجديد و<strong>اسم جلسة جديد</strong> (مثال: members_session2) ثم حفظت.
+      الآن Telegram سيرسل كود تفعيل على رقم الهاتف الجديد — أدخله هنا لتسجيل الدخول
+      مباشرة بدون نافذة CMD:
+    </p>
+    <form method="post" action="{{ url_for('run_userbot_login') }}">
+      <label>كود التفعيل (يصل على تلغرام)</label>
+      <input type="text" dir="ltr" name="code" required placeholder="00000" autocomplete="off">
+      <label>كلمة مرور الحساب 2FA (إن كانت مفعلة — اختياري)</label>
+      <input type="password" dir="ltr" name="password" placeholder="اختياري" autocomplete="off">
+      <button class="btn btn-check" type="submit">🔑 تسجيل الدخول بهذا الكود</button>
+    </form>
+    <form method="post" action="{{ url_for('resend_userbot_code') }}">
+      <button class="btn" type="submit">📲 إعادة إرسال كود التفعيل</button>
+    </form>
+    <p class="settings-hint">
+      أو يدوياً من نافذة أوامر (CMD) بالمجلد:
+      <code dir="ltr">python userbot_sync.py --session {{ env.get('TB_SESSION_NAME', 'members_session') }}</code>
+    </p>
+  </div>
+  {% endif %}
+  {% if groups_list %}
+  <table class="data-table">
+    <thead>
+      <tr><th>المجموعة</th><th>المعرّف</th><th>عدد الأعضاء</th><th></th></tr>
+    </thead>
+    <tbody>
+    {% for g in groups_list %}
+      <tr>
+        <td>{{ g.title }}</td>
+        <td dir="ltr">{{ g.id }}</td>
+        <td>{{ g.members }}</td>
+        <td>
+          <form method="post" action="{{ url_for('run_userbot_sync') }}" style="display:inline">
+            <input type="hidden" name="chat_id" value="{{ g.id }}">
+            <button class="btn btn-check btn-sm" type="submit">🧲 سحب منها</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+
+<section class="card settings-form">
+  <h3>نشر الرسالة الحالية</h3>
+  <pre class="channel-preview">{{ preview }}</pre>
+  <p class="settings-hint">روسل الرسالة مجدداً من زر «نشر وتثبيت» لتطبيق الحقول المحددة.</p>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function copyToClipboard(text, btn) {
+  function done() {
+    if (btn) { btn.textContent = '✅ نُسخ'; setTimeout(function(){ btn.textContent = '📋 نسخ'; }, 1500); }
+  }
+  function fallback() {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); done(); } catch (e) {}
+    document.body.removeChild(ta);
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(fallback);
+  } else { fallback(); }
+}
+function copyCommands(btn) {
+  copyToClipboard(document.getElementById('ub-commands').textContent, btn);
+}
+function copySteps(btn) {
+  var parts = [];
+  document.querySelectorAll('#ub-steps li').forEach(function(li) { parts.push(li.textContent.trim()); });
+  parts.push(document.getElementById('ub-commands').textContent);
+  copyToClipboard(parts.join('\n'), btn);
+}
+</script>
+{% endblock %}
