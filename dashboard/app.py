@@ -107,6 +107,11 @@ def login_required(f):
     return wrapper
 
 
+@app.route("/healthz")
+def healthz():
+    return "ok"
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":

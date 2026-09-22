@@ -20,10 +20,11 @@ DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "")
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")
 DASHBOARD_HOST = os.getenv("DASHBOARD_HOST", "127.0.0.1")
 DASHBOARD_PORT = int(os.getenv("DASHBOARD_PORT", "5000"))
-# Railway/paas: يستمع على المنفذ الذي يوفره النظام على كل الواجهات
+# Railway/paas: يستمع على المنفذ الذي يوفره النظام؛ نُجبر 0.0.0.0
+# دائماً (يتجاهل أي DASHBOARD_HOST قد يُترك محلياً بالخطأ في المتغيرات)
 RAILWAY_PORT = os.getenv("PORT")
 if RAILWAY_PORT:
-    DASHBOARD_HOST = os.getenv("DASHBOARD_HOST", "0.0.0.0")
+    DASHBOARD_HOST = "0.0.0.0"
     DASHBOARD_PORT = int(RAILWAY_PORT)
 PROXY_URL = os.getenv("PROXY_URL", "").strip() or None
 
