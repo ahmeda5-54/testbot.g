@@ -1,0 +1,13 @@
+.env
+data/
+uploads/
+userbot/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.git/
+*.session
+*.session-journal
+deploy.sh
+supervisor.py
