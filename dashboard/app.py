@@ -1011,6 +1011,13 @@ def support_page():
     avg_reply_txt = (
         f"{avg_min:.0f} دقيقة" if avg_min is not None else "—"
     )
+    active_type = ""
+    for _key, label, _c in types:
+        if label == msg_type:
+            active_type = msg_type
+            break
+    templates = db.get_support_templates(active_type)
+    all_templates = db.get_support_templates()
     return render_template(
         "support.html",
         msgs=msgs,
@@ -1023,7 +1030,8 @@ def support_page():
         types=types,
         statuses=statuses,
         avg_reply_txt=avg_reply_txt,
-        templates=db.get_support_templates(),
+        templates=templates,
+        all_templates=all_templates,
         satisfaction_counts=db.get_support_satisfaction_counts(),
     )
 
@@ -1115,12 +1123,13 @@ def support_unban_user(msg_id: int):
 def support_templates_save():
     title = request.form.get("title", "").strip()
     body = request.form.get("body", "").strip()
+    msg_type = request.form.get("type", "").strip()
     if title and body:
-        db.add_support_template(title, body)
+        db.add_support_template(title, body, msg_type)
         flash("تم حفظ القالب.", "success")
     else:
         flash("أدخل عنوان النص ومحتواه.", "error")
-    return redirect(url_for("support_page"))
+    return redirect(url_for("support_page", type=msg_type))
 
 
 @app.post("/support/templates/<int:template_id>/delete")

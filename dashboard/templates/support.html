@@ -138,12 +138,9 @@
 
   <form class="note-form" method="post" action="{{ url_for('support_reply', msg_id=m.id) }}">
     <label for="reply-{{ m.id }}">{% if m.status == 'new' %}كتابة الرد وإرساله إلى العضو{% else %}رد إضافي إلى العضو{% endif %}</label>
-    {% if templates %}
+    {% if all_templates %}
     <select class="tpl-pick" data-mid="{{ m.id }}" style="width:100%; margin-bottom:6px;">
       <option value="">📋 أدخل من قالب جاهز...</option>
-      {% for t in templates %}
-      <option value="{{ t.id }}">{{ t.title }}</option>
-      {% endfor %}
     </select>
     {% endif %}
     <textarea id="reply-{{ m.id }}" name="reply" rows="2"
@@ -165,7 +162,8 @@
     <form class="inline-form" method="post" action="{{ url_for('support_templates_save') }}" style="margin-top:8px;">
       <input type="hidden" name="title" value="من رسالة #{{ m.id }}">
       <input type="hidden" name="body" value="{{ m.message }}">
-      <button class="btn btn-sm" type="submit">💾 حفظ نص هذه الرسالة كقالب</button>
+      <input type="hidden" name="type" value="{{ m.msgType }}">
+      <button class="btn btn-sm" type="submit">💾 حفظ نص هذه الرسالة كقالب ({{ m.msgType }})</button>
     </form>
   </details>
 
@@ -192,24 +190,33 @@
 {% endif %}
 
 {% if templates %}
-<h3 class="settings-section-title">📋 ردود جاهزة (قوالب)</h3>
+<h3 class="settings-section-title">📋 ردود جاهزة (قوالب) — {{ msg_type or 'كل الأنواع' }}</h3>
 <section class="card" style="margin-bottom:16px;">
   <div class="pills" style="flex-wrap:wrap;">
     {% for t in templates %}
-    <span class="pill" style="cursor:pointer;" onclick="fillFirstFromTemplate({{ t.id }})" title="{{ t.body }}">{{ t.title }}</span>
+    <span class="pill" style="cursor:pointer;" onclick="fillFirstFromTemplate({{ t.id }})" title="{{ t.body }}">
+      {% if t.type %}<span class="pill-badge" style="margin-inline-end:4px;">{{ t.type }}</span>{% endif %}{{ t.title }}
+    </span>
     <form class="inline-form" method="post" action="{{ url_for('support_template_delete', template_id=t.id) }}"
           onsubmit="return confirm('حذف هذا القالب؟');">
       <button class="btn btn-danger btn-sm" type="submit">✕</button>
     </form>
     {% endfor %}
   </div>
-  <p class="settings-hint" style="margin-top:6px;">اضغط على قالب لملء أول مربع رد فارغ. يمكنك استخدام المتغيرات في نص القالب:
+  <p class="settings-hint" style="margin-top:6px;">تبويب النوع النشط يحدد القوالب الظاهرة (خاصة النوع + العامة «لجميع الأنواع»). اضغط قالباً لملء أول مربع رد فارغ. المتغيرات:
     <code>{name}</code> اسم العضو، <code>{id}</code> معرفه، <code>{type}</code> نوع الرسالة.</p>
 </section>
 {% endif %}
 
 <form class="card settings-form" method="post" action="{{ url_for('support_templates_save') }}">
   <h4 class="ub-steps-title">📋 إضافة رد جاهز جديد</h4>
+  <label>نوع الرسالة لهذا القالب</label>
+  <select name="type" style="width:100%;">
+    <option value="" {% if msg_type == '' %}selected{% endif %}>لجميع الأنواع</option>
+    {% for key, label, _c in types %}
+      {% if key %}<option value="{{ label }}" {% if msg_type == label %}selected{% endif %}>{{ label }}</option>{% endif %}
+    {% endfor %}
+  </select>
   <label>عنوان القالب (مثال: تأخير المراجعة)</label>
   <input type="text" name="title" placeholder="عنوان سريع يظهر لك فقط" required>
   <label>نص القالب</label>
@@ -218,7 +225,36 @@
 </form>
 
 <script>
-var SUPPORT_TEMPLATES = {{ templates | list | tojson }};
+var SUPPORT_TEMPLATES = {{ all_templates | list | tojson }};
+
+function templatesForType(mtype) {
+  var out = [];
+  for (var i = 0; i < SUPPORT_TEMPLATES.length; i++) {
+    var t = SUPPORT_TEMPLATES[i];
+    if (!t.type || t.type === (mtype || '')) { out.push(t); }
+  }
+  return out;
+}
+
+function populatePickers() {
+  var sels = document.querySelectorAll('select.tpl-pick');
+  for (var s = 0; s < sels.length; s++) {
+    var sel = sels[s];
+    var mid = sel.dataset.mid;
+    var ta = document.querySelector('textarea[name="reply"][data-mid="' + mid + '"]');
+    var mtype = ta ? (ta.dataset.mtype || '') : '';
+    var list = templatesForType(mtype);
+    if (!list.length) { sel.style.display = 'none'; continue; }
+    sel.style.display = '';
+    sel.innerHTML = '<option value="">📋 أدخل من قالب جاهز...</option>';
+    for (var i = 0; i < list.length; i++) {
+      var opt = document.createElement('option');
+      opt.value = list[i].id;
+      opt.textContent = (list[i].type ? '[' + list[i].type + '] ' : '') + list[i].title;
+      sel.appendChild(opt);
+    }
+  }
+}
 
 function firstReplyArea() {
   var areas = document.querySelectorAll('textarea[name="reply"]');
@@ -253,5 +289,7 @@ document.addEventListener('change', function (e) {
   if (!ta) return;
   applyTemplate(parseInt(sel.value, 10), ta);
 });
+
+populatePickers();
 </script>
 {% endblock %}

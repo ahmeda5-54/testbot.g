@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS support_templates (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
     body TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT '',
     createdAt TEXT NOT NULL
 );
 
@@ -151,6 +152,14 @@ def init_db() -> None:
             "ON support_messages(createdAt)"
         )
         _migrate_support_columns(conn)
+        _migrate_template_type_column(conn)
+
+
+def _migrate_template_type_column(conn: sqlite3.Connection) -> None:
+    """يضيف عمود type لقواعد القوالب القديمة (قوالب دون تصنيف)."""
+    cols = [row["name"] for row in conn.execute("PRAGMA table_info(support_templates)")]
+    if "type" not in cols:
+        conn.execute("ALTER TABLE support_templates ADD COLUMN type TEXT NOT NULL DEFAULT ''")
 
 
 def _migrate_support_columns(conn: sqlite3.Connection) -> None:
@@ -584,25 +593,35 @@ def avg_support_reply_time(days: int = 30) -> Optional[float]:
 
 
 # ── قوالب الردود الجاهزة ─────────────────────────────
-def add_support_template(title: str, body: str) -> dict:
+def add_support_template(title: str, body: str, msg_type: str = "") -> dict:
     title = (title or "").strip()[:100]
     body = (body or "").strip()[:4000]
+    msg_type = (msg_type or "").strip()[:100]
     with get_connection() as conn:
         cursor = conn.execute(
-            "INSERT INTO support_templates (title, body, createdAt) "
-            "VALUES (?, ?, ?)",
-            (title, body, now_iso()),
+            "INSERT INTO support_templates (title, body, type, createdAt) "
+            "VALUES (?, ?, ?, ?)",
+            (title, body, msg_type, now_iso()),
         )
         conn.commit()
-        return {"id": cursor.lastrowid, "title": title, "body": body}
+        return {"id": cursor.lastrowid, "title": title, "body": body, "type": msg_type}
 
 
-def get_support_templates() -> list[dict]:
+def get_support_templates(msg_type: str = "") -> list[dict]:
+    # msg_type فارغ = "لجميع الأنواع". إذا حُدد نوع نعرض قوالبه + العامة.
     with get_connection() as conn:
-        rows = conn.execute(
-            "SELECT id, title, body FROM support_templates "
-            "ORDER BY id DESC"
-        ).fetchall()
+        if msg_type:
+            rows = conn.execute(
+                "SELECT id, title, body, type FROM support_templates "
+                "WHERE type = ? OR type = '' "
+                "ORDER BY (type = '') ASC, id DESC",
+                (msg_type,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, title, body, type FROM support_templates "
+                "ORDER BY id DESC"
+            ).fetchall()
     return [_row_to_dict(r) for r in rows]
 
 
