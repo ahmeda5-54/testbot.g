@@ -8,14 +8,15 @@ import config
 import db
 from bot import bridge, texts
 
-# الوحدات تُستورد مرة وتُعاد تحميلها داخل run() لبناء Routers جديدة كل دورة
-import bot.handlers_admin
-import bot.handlers_start
-import bot.handlers_support
-import bot.handlers_support_pointer
-import bot.handlers_support_start
-import bot.handlers_subscribe
-import bot.handlers_verify
+# الوحدات تُستورد مرة وتُعاد تحميلها داخل run() لبناء Routers جديدة كل دورة.
+# أسماء مستقلة عن متغيّر run() المحلي `bot` (كائن aiogram.Bot) لئلا يُظلل الحزمة.
+from bot import handlers_admin as _mod_admin
+from bot import handlers_start as _mod_start
+from bot import handlers_support as _mod_support
+from bot import handlers_support_pointer as _mod_support_pointer
+from bot import handlers_support_start as _mod_support_start
+from bot import handlers_subscribe as _mod_subscribe
+from bot import handlers_verify as _mod_verify
 
 
 def _fresh_router(module) -> Router:
@@ -138,13 +139,13 @@ async def run() -> None:
 
     # Routers جديدة في كل دورة — ترتيب reload مهم: handlers_subscribe يستورد
     # دوال التحقق من handlers_verify، لذا يُعاد تحميل verify أولاً.
-    start_router = _fresh_router(bot.handlers_start)
-    verify_router = _fresh_router(bot.handlers_verify)
-    admin_router = _fresh_router(bot.handlers_admin)
-    support_router = _fresh_router(bot.handlers_support)
-    subscribe_router = _fresh_router(bot.handlers_subscribe)
-    support_start_router = _fresh_router(bot.handlers_support_start)
-    support_pointer_router = _fresh_router(bot.handlers_support_pointer)
+    start_router = _fresh_router(_mod_start)
+    verify_router = _fresh_router(_mod_verify)
+    admin_router = _fresh_router(_mod_admin)
+    support_router = _fresh_router(_mod_support)
+    subscribe_router = _fresh_router(_mod_subscribe)
+    support_start_router = _fresh_router(_mod_support_start)
+    support_pointer_router = _fresh_router(_mod_support_pointer)
 
     dp.include_router(start_router)
     dp.include_router(verify_router)
