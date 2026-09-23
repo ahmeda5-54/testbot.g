@@ -61,6 +61,21 @@ async def _initial_membership_check() -> None:
         print(f"[bot] initial membership check failed: {exc!r}", flush=True)
 
 
+async def _restart_watchdog(dispatchers: list[Dispatcher]) -> None:
+    """يراقب علم إعادة التشغيل (يُوضع من لوحة الإعدادات) ويوقف البولينغ فوراً
+    حتى يعاد بناء البوت بالموجهات الصحيحة للوضع الجديد."""
+    while True:
+        if config.RESTART_FLAG.is_file():
+            print("[bot] restart flag detected — stopping polling to rewire", flush=True)
+            for disp in dispatchers:
+                try:
+                    await disp.stop_polling()
+                except Exception:
+                    pass
+            return
+        await asyncio.sleep(1)
+
+
 async def _poll_and_recover(dispatcher: Dispatcher, bot: Bot) -> None:
     """يشغّل البولينغ ويعيد تشغيله عند السقوط، ويوقف عند طلب إعادة تشغيل."""
     while True:
@@ -118,6 +133,7 @@ async def run() -> None:
         pass
 
     pollers = [_poll_and_recover(dp, bot)]
+    asyncio.create_task(_restart_watchdog([dp]))
 
     if use_dedicated and config.SUPPORT_BOT_TOKEN:
         support_bot = Bot(config.SUPPORT_BOT_TOKEN, proxy=config.PROXY_URL)
@@ -139,9 +155,11 @@ async def run() -> None:
         except Exception:
             pass
         pollers.append(_poll_and_recover(sdp, support_bot))
+        asyncio.create_task(_restart_watchdog([sdp]))
         print("[bot] dedicated support bot active", flush=True)
     else:
         # لا بوت دعم — رسائل الدعم تمر عبر البوت الرئيسي حصرياً
+        bridge.register_support_bot(None)
         bridge.register_support_bot(None)
         print(f"[bot] support inline (mode={config.SUPPORT_MODE})", flush=True)
 
