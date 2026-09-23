@@ -1,24 +1,31 @@
 import asyncio
+import importlib
 
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, Router
 from aiogram.types import BotCommand
 
 import config
 import db
 from bot import bridge, texts
-from bot.handlers_admin import router as admin_router
-from bot.handlers_start import router as start_router
-from bot.handlers_support import router as support_router
-from bot.handlers_support_pointer import router as support_pointer_router
-from bot.handlers_support_start import router as support_start_router
-from bot.handlers_subscribe import router as subscribe_router
-from bot.handlers_verify import router as verify_router
 
-SUPPORT_ROUTERS = [
-    support_router,
-    subscribe_router,
-    support_start_router,
-]
+# الوحدات تُستورد مرة وتُعاد تحميلها داخل run() لبناء Routers جديدة كل دورة
+import bot.handlers_admin
+import bot.handlers_start
+import bot.handlers_support
+import bot.handlers_support_pointer
+import bot.handlers_support_start
+import bot.handlers_subscribe
+import bot.handlers_verify
+
+
+def _fresh_router(module) -> Router:
+    """يعيد تحميل وحدة المعالجات لتنشئ Router جديداً بالكامل.
+
+    aiogram يرفض ربط نفس كائن Router بديسباتشر جديد، وrewire المبني على
+    إعادة تشغيل run() يحتاج ديسباتشرات جديدة دائماً، لذا يجب أن يكون كل
+    Router طازجاً في كل دورة. reload يعيد تنفيذ الوحدة فيُسجَّل الـ Router
+    الجديد بحالاته المناسبة (الوحدات التابعة flow/texts/db لا تُعاد تحميلها)."""
+    return importlib.reload(module).router
 
 
 async def _expiry_loop(bot: Bot) -> None:
@@ -110,10 +117,35 @@ async def _poll_and_recover(dispatcher: Dispatcher, bot: Bot) -> None:
         return
 
 
+async def _set_commands(bot: Bot, commands: list[tuple[str, str]]) -> None:
+    try:
+        await bot.set_my_commands([BotCommand(command=c, description=d) for c, d in commands])
+    except Exception:
+        pass
+
+
+async def _delete_webhook(bot: Bot) -> None:
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+    except Exception:
+        pass
+
+
 async def run() -> None:
     db.init_db()
     bot = Bot(config.BOT_TOKEN, proxy=config.PROXY_URL)
     dp = Dispatcher()
+
+    # Routers جديدة في كل دورة — ترتيب reload مهم: handlers_subscribe يستورد
+    # دوال التحقق من handlers_verify، لذا يُعاد تحميل verify أولاً.
+    start_router = _fresh_router(bot.handlers_start)
+    verify_router = _fresh_router(bot.handlers_verify)
+    admin_router = _fresh_router(bot.handlers_admin)
+    support_router = _fresh_router(bot.handlers_support)
+    subscribe_router = _fresh_router(bot.handlers_subscribe)
+    support_start_router = _fresh_router(bot.handlers_support_start)
+    support_pointer_router = _fresh_router(bot.handlers_support_pointer)
+
     dp.include_router(start_router)
     dp.include_router(verify_router)
     dp.include_router(admin_router)
@@ -130,47 +162,38 @@ async def run() -> None:
         dp.include_router(subscribe_router)
 
     bridge.register(asyncio.get_running_loop(), bot)
-    asyncio.create_task(_expiry_loop(bot))
-    asyncio.create_task(_initial_membership_check())
-    asyncio.create_task(_heartbeat_loop(bot))
+    tasks = [
+        asyncio.create_task(_expiry_loop(bot)),
+        asyncio.create_task(_initial_membership_check()),
+        asyncio.create_task(_heartbeat_loop(bot)),
+    ]
 
-    try:
-        await bot.set_my_commands(
-            [
-                BotCommand(command="start", description="ابدأ التحقق"),
-                BotCommand(command="support", description="تواصل مع الدعم"),
-                BotCommand(command="post", description="نشر رسالة القناة"),
-            ]
-        )
-    except Exception:
-        pass
-
-    try:
-        await bot.delete_webhook(drop_pending_updates=True)
-    except Exception:
-        pass
+    await _set_commands(
+        bot,
+        [
+            ("start", "ابدأ التحقق"),
+            ("support", "تواصل مع الدعم"),
+            ("post", "نشر رسالة القناة"),
+        ],
+    )
+    await _delete_webhook(bot)
 
     pollers = [_poll_and_recover(dp, bot)]
-
+    support_bot = None
     if use_dedicated and config.SUPPORT_BOT_TOKEN:
         support_bot = Bot(config.SUPPORT_BOT_TOKEN, proxy=config.PROXY_URL)
         sdp = Dispatcher()
-        for router in SUPPORT_ROUTERS:
+        for router in (support_router, subscribe_router, support_start_router):
             sdp.include_router(router)
         bridge.register_support_bot(support_bot)
-        try:
-            await support_bot.set_my_commands(
-                [
-                    BotCommand(command="start", description="فتح خدمة الدعم"),
-                    BotCommand(command="support", description="فتح خدمة الدعم"),
-                ]
-            )
-        except Exception:
-            pass
-        try:
-            await support_bot.delete_webhook(drop_pending_updates=True)
-        except Exception:
-            pass
+        await _set_commands(
+            support_bot,
+            [
+                ("start", "فتح خدمة الدعم"),
+                ("support", "فتح خدمة الدعم"),
+            ],
+        )
+        await _delete_webhook(support_bot)
         pollers.append(_poll_and_recover(sdp, support_bot))
         print("[bot] dedicated support bot active", flush=True)
     else:
@@ -178,4 +201,15 @@ async def run() -> None:
         bridge.register_support_bot(None)
         print(f"[bot] support inline (mode={config.SUPPORT_MODE})", flush=True)
 
-    await asyncio.gather(*pollers)
+    try:
+        await asyncio.gather(*pollers)
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        for b in (bot, support_bot):
+            if b is not None:
+                try:
+                    await b.session.close()
+                except Exception:
+                    pass
