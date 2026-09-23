@@ -87,12 +87,7 @@ async def run() -> None:
     dp.include_router(admin_router)
 
     # وضع تشغيل بوت الدعم — تحديد واضح أيهما يعمل للدعم
-    if config.SUPPORT_MODE == "inline":
-        use_dedicated = False
-    elif config.SUPPORT_MODE == "dedicated":
-        use_dedicated = bool(config.SUPPORT_BOT_TOKEN)
-    else:  # auto
-        use_dedicated = bool(config.SUPPORT_BOT_TOKEN)
+    use_dedicated = config.SUPPORT_DEDICATED
 
     if use_dedicated:
         # البوت الرئيسي = كل المهام عدا الدعم (يوجّه المستخدم لبوت الدعم فقط)

@@ -34,7 +34,7 @@ def support_keyboard() -> InlineKeyboardMarkup:
 
 
 def support_start_keyboard() -> InlineKeyboardMarkup:
-    if config.SUPPORT_BOT_USERNAME:
+    if config.SUPPORT_DEDICATED and config.SUPPORT_BOT_USERNAME:
         return InlineKeyboardMarkup(
             inline_keyboard=[
                 [

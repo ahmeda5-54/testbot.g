@@ -248,6 +248,7 @@ def _apply_to_config(updates: dict) -> None:
         mode = raw_support_mode.strip().lower()
         if mode in ("auto", "inline", "dedicated"):
             config.SUPPORT_MODE = mode
+    config.SUPPORT_DEDICATED = bool(config.SUPPORT_BOT_TOKEN) if config.SUPPORT_MODE != "inline" else False
 
 
 @app.post("/settings/general")

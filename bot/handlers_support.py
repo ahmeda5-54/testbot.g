@@ -21,7 +21,7 @@ async def cmd_support(message: Message) -> None:
 @router.callback_query(F.data == f"{SUPPORT_CB}:start")
 async def on_support_start(callback: CallbackQuery) -> None:
     await callback.answer()
-    if config.SUPPORT_BOT_USERNAME:
+    if config.SUPPORT_DEDICATED and config.SUPPORT_BOT_USERNAME:
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
         markup = InlineKeyboardMarkup(

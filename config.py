@@ -34,6 +34,8 @@ SUPPORT_BOT_USERNAME = os.getenv("SUPPORT_BOT_USERNAME", "").strip().lstrip("@")
 SUPPORT_MODE = os.getenv("SUPPORT_MODE", "auto").strip().lower()
 if SUPPORT_MODE not in ("auto", "inline", "dedicated"):
     SUPPORT_MODE = "auto"
+# هل بوت الدعم المخصص فعّال فعلاً؟ (inline يمنعه مهما وُجد توكنه)
+SUPPORT_DEDICATED = bool(SUPPORT_BOT_TOKEN) if SUPPORT_MODE != "inline" else False
 ADMIN_IDS = _int_list(os.getenv("ADMIN_IDS", ""))
 CHANNEL_ID = _int_env("CHANNEL_ID", 0)
 DEADLINE_HOURS = _int_env("DEADLINE_HOURS", 48)

@@ -10,7 +10,7 @@ router = Router()
 
 @router.message(Command("support"))
 async def point_to_support_bot(message: Message) -> None:
-    if not config.SUPPORT_BOT_USERNAME:
+    if not (config.SUPPORT_DEDICATED and config.SUPPORT_BOT_USERNAME):
         return
     await message.answer(
         texts.SUPPORT_MOVE_TO_BOT,
