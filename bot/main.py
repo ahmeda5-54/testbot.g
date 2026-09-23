@@ -61,36 +61,53 @@ async def _initial_membership_check() -> None:
         print(f"[bot] initial membership check failed: {exc!r}", flush=True)
 
 
-async def _restart_watchdog(dispatchers: list[Dispatcher]) -> None:
-    """يراقب علم إعادة التشغيل (يُوضع من لوحة الإعدادات) ويوقف البولينغ فوراً
-    حتى يعاد بناء البوت بالموجهات الصحيحة للوضع الجديد."""
-    while True:
-        if config.RESTART_FLAG.is_file():
-            print("[bot] restart flag detected — stopping polling to rewire", flush=True)
-            for disp in dispatchers:
-                try:
-                    await disp.stop_polling()
-                except Exception:
-                    pass
-            return
+async def _restart_watcher(dispatcher: Dispatcher) -> None:
+    """ينتظر علم إعادة التشغيل (من لوحة الإعدادات)، ثم يوقف polling بسلاسة.
+
+    stop_polling() يرمي RuntimeError لو لم تكن polling قد بدأت، لذا ننتظر
+    حتى يمسك الـ dispatcher بأنه يعمل فعلاً (نفس حراسة aiogram الداخلية).
+    بعد عودة start_polling بسبب هذا الإيقاف، يعود run() ويعيد بناء كل شيء
+    بقيم الإعدادات الجديدة. العلم يُحذف هنا لئلا نتكرر في إعادة تشغيل لا نهائية.
+    """
+    while not config.RESTART_FLAG.is_file():
         await asyncio.sleep(1)
+    try:
+        config.RESTART_FLAG.unlink()
+    except OSError:
+        pass
+    print("[bot] restart flag detected — stopping polling to rewire", flush=True)
+    # ننتظر حتى بدء polling فعلياً (الـ dispatcher يمسك قفل التشغيل)
+    while True:
+        running_lock = getattr(dispatcher, "_running_lock", None)
+        if running_lock is None or not running_lock.locked():
+            await asyncio.sleep(0.2)
+            continue
+        try:
+            await dispatcher.stop_polling()
+            return
+        except RuntimeError:
+            await asyncio.sleep(0.5)
 
 
 async def _poll_and_recover(dispatcher: Dispatcher, bot: Bot) -> None:
-    """يشغّل البولينغ ويعيد تشغيله عند السقوط، ويوقف عند طلب إعادة تشغيل."""
+    """يشغّل polling للبوت ويعيد التشغيل عند السقوط. watcher واحد يبقى حيّاً
+    طوال الجلسة: لو التُقط علم إعادة التشغيل ثم سقط polling لاحقاً، يطبّق
+    الـ watcher الإيقاف عند أول إقلاع ناجح؛ ولا يُلغى إلا عند المغادرة بسلاسة."""
+    watcher = asyncio.create_task(_restart_watcher(dispatcher))
     while True:
-        if config.RESTART_FLAG.is_file():
-            try:
-                config.RESTART_FLAG.unlink()
-            except OSError:
-                pass
-            print("[bot] restart requested — rebooting with new settings", flush=True)
-            return
         try:
             await dispatcher.start_polling(bot, polling_timeout=3)
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
             print(f"[bot] polling crashed: {exc!r}, restarting in 5s", flush=True)
             await asyncio.sleep(5)
+            continue
+        if not watcher.done():
+            watcher.cancel()
+        # عاد start_polling بسلاسة = أُوقف بسبب علم إعادة التشغيل → نعيد البناء
+        print("[bot] polling stopped normally — rewiring with latest settings", flush=True)
+        return
 
 
 async def run() -> None:
@@ -108,8 +125,9 @@ async def run() -> None:
         # البوت الرئيسي = كل المهام عدا الدعم (يوجّه المستخدم لبوت الدعم فقط)
         dp.include_router(support_pointer_router)
     else:
-        # البوت الرئيسي = كل المهام بما فيها الدعم
+        # البوت الرئيسي = كل المهام بما فيها الدعم والاشتراك
         dp.include_router(support_router)
+        dp.include_router(subscribe_router)
 
     bridge.register(asyncio.get_running_loop(), bot)
     asyncio.create_task(_expiry_loop(bot))
@@ -133,7 +151,6 @@ async def run() -> None:
         pass
 
     pollers = [_poll_and_recover(dp, bot)]
-    asyncio.create_task(_restart_watchdog([dp]))
 
     if use_dedicated and config.SUPPORT_BOT_TOKEN:
         support_bot = Bot(config.SUPPORT_BOT_TOKEN, proxy=config.PROXY_URL)
@@ -155,11 +172,9 @@ async def run() -> None:
         except Exception:
             pass
         pollers.append(_poll_and_recover(sdp, support_bot))
-        asyncio.create_task(_restart_watchdog([sdp]))
         print("[bot] dedicated support bot active", flush=True)
     else:
         # لا بوت دعم — رسائل الدعم تمر عبر البوت الرئيسي حصرياً
-        bridge.register_support_bot(None)
         bridge.register_support_bot(None)
         print(f"[bot] support inline (mode={config.SUPPORT_MODE})", flush=True)
 

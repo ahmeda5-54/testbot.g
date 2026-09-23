@@ -636,8 +636,12 @@ def _render_settings(**extra):
     from bot import flow, texts as bot_texts
 
     env = _read_env()
+    try:
+        preview_hours = int(env.get("DEADLINE_HOURS", str(config.DEADLINE_HOURS)))
+    except (TypeError, ValueError):
+        preview_hours = config.DEADLINE_HOURS
     preview = bot_texts.channel_message(
-        int(env.get("DEADLINE_HOURS", str(config.DEADLINE_HOURS))),
+        preview_hours,
         flow.required_field_labels(),
     )
     session_exists = _session_authorized()
