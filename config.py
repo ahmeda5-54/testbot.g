@@ -24,6 +24,16 @@ def _int_env(name: str, default: int) -> int:
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "")
+# بوت دعم مخصص (اختياري) — إن وُجد، تكون محادثات الدعم عبره حصرياً
+SUPPORT_BOT_TOKEN = os.getenv("SUPPORT_BOT_TOKEN", "").strip() or None
+SUPPORT_BOT_USERNAME = os.getenv("SUPPORT_BOT_USERNAME", "").strip().lstrip("@") or None
+# وضع تشغيل بوت الدعم: auto | inline | dedicated
+#   auto      -> إن وُجد توكن بوت الدعم يعمل هو للدعم، وإلا فالبوت الرئيسي
+#   inline    -> البوت الرئيسي فقط (الدعم داخله)، بوت الدعم لا يعمل مهما وُجد توكنه
+#   dedicated -> بوت الدعم للدعم حصرياً، والرئيسي لبقية المهام (يتطلب التوكن)
+SUPPORT_MODE = os.getenv("SUPPORT_MODE", "auto").strip().lower()
+if SUPPORT_MODE not in ("auto", "inline", "dedicated"):
+    SUPPORT_MODE = "auto"
 ADMIN_IDS = _int_list(os.getenv("ADMIN_IDS", ""))
 CHANNEL_ID = _int_env("CHANNEL_ID", 0)
 DEADLINE_HOURS = _int_env("DEADLINE_HOURS", 48)

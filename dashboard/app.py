@@ -1,14 +1,18 @@
+import csv
+import io
 import json
 import os
 import subprocess
 import sys
 import threading
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timezone, timedelta
 from functools import wraps
 from pathlib import Path
 
 from flask import (
     Flask,
+    Response,
     abort,
     flash,
     redirect,
@@ -231,6 +235,19 @@ def _apply_to_config(updates: dict) -> None:
     raw_proxy = updates.get("PROXY_URL")
     if raw_proxy is not None:
         config.PROXY_URL = raw_proxy.strip() or None
+    raw_support_token = updates.get("SUPPORT_BOT_TOKEN")
+    if raw_support_token is not None:
+        config.SUPPORT_BOT_TOKEN = raw_support_token.strip() or None
+    raw_support_username = updates.get("SUPPORT_BOT_USERNAME")
+    if raw_support_username is not None:
+        config.SUPPORT_BOT_USERNAME = (
+            raw_support_username.strip().lstrip("@") or None
+        )
+    raw_support_mode = updates.get("SUPPORT_MODE")
+    if raw_support_mode is not None:
+        mode = raw_support_mode.strip().lower()
+        if mode in ("auto", "inline", "dedicated"):
+            config.SUPPORT_MODE = mode
 
 
 @app.post("/settings/general")
@@ -242,6 +259,11 @@ def save_general_settings():
     admin_raw = request.form.get("admin_ids", "").strip()
     deadline_raw = request.form.get("deadline_hours", "").strip()
     proxy_raw = request.form.get("proxy_url", "").strip()
+    support_token = request.form.get("support_bot_token", "").strip()
+    support_username = request.form.get("support_bot_username", "").strip().lstrip("@")
+    support_mode = request.form.get("support_mode", "auto").strip().lower()
+    if support_mode not in ("auto", "inline", "dedicated"):
+        support_mode = "auto"
 
     try:
         channel_id = int(channel_raw)
@@ -275,6 +297,9 @@ def save_general_settings():
             "ADMIN_IDS": ",".join(admins),
             "DEADLINE_HOURS": str(deadline),
             "PROXY_URL": proxy_raw,
+            "SUPPORT_BOT_TOKEN": support_token,
+            "SUPPORT_BOT_USERNAME": support_username,
+            "SUPPORT_MODE": support_mode,
         }
     )
     _request_bot_restart()
@@ -632,6 +657,7 @@ def _render_settings(**extra):
         "invite_value": invite_value,
         "invite_unit": invite_unit,
         "base_dir": str(config.BASE_DIR),
+        "support_mode": getattr(config, "SUPPORT_MODE", "auto"),
     }
     ctx.update(extra)
     return render_template("settings.html", **ctx)
@@ -834,6 +860,7 @@ def notifications():
         "notifications.html",
         total=counts["ALL"],
         counts=counts,
+        broadcasts=db.get_last_broadcasts(10),
     )
 
 
@@ -842,8 +869,18 @@ def notifications():
 def broadcast():
     text = request.form.get("message", "").strip()
     scope = request.form.get("scope", "all")
-    if not text:
-        flash("اكتب نص الإشعار أولاً.", "error")
+    photo_file = request.files.get("photo")
+    photo_path = None
+    if photo_file and photo_file.filename:
+        ext = Path(photo_file.filename).suffix.lower()
+        if ext not in (".jpg", ".jpeg", ".png", ".webp"):
+            flash("صيغة الصورة غير مدعومة (JPG/PNG/WebP فقط).", "error")
+            return redirect(url_for("notifications"))
+        config.UPLOADS_DIR.mkdir(exist_ok=True)
+        photo_path = config.UPLOADS_DIR / f"broadcast_{int(time.time())}{ext}"
+        photo_file.save(photo_path)
+    if not text and not photo_path:
+        flash("اكتب نص الإشعار أو ارفع صورة أولاً.", "error")
         return redirect(url_for("notifications"))
     if scope == "pending":
         members = db.get_members(db.NOT_STARTED) + db.get_members(db.PENDING)
@@ -853,14 +890,20 @@ def broadcast():
             for m in db.get_members(None)
             if m["status"] not in (db.VERIFIED, db.REMOVED)
         ]
+    elif scope == "verified":
+        members = db.get_members(db.VERIFIED)
+    elif scope == "rejected":
+        members = db.get_members(db.REJECTED) + db.get_members(db.EXPIRED)
     else:
+        scope = "all"
         members = db.get_members(None)
     ids = [m["telegramUserId"] for m in members]
     if not ids:
         flash("لا يوجد مشتركون في هذا النطاق.", "error")
         return redirect(url_for("notifications"))
-    bridge.broadcast(text, ids)
-    flash(f"تم بدء إرسال الإشعار إلى {len(ids)} مشترك في الخلفية.", "success")
+    bridge.broadcast(text, ids, str(photo_path) if photo_path else None, scope)
+    kind = "إشعار مع صورة" if photo_path else "إشعار"
+    flash(f"تم بدء إرسال الـ{kind} إلى {len(ids)} مشترك في الخلفية.", "success")
     return redirect(url_for("notifications"))
 
 
@@ -933,14 +976,20 @@ def mark_removed(user_id: int):
 def support_page():
     msg_type = request.args.get("type", "").strip()
     status = request.args.get("status", "").strip()
+    q = request.args.get("q", "").strip()
     try:
         page = max(1, int(request.args.get("page", "1")))
     except ValueError:
         page = 1
     per_page = 20
     msgs, total = db.get_support_messages(
-        msg_type or None, status or None, page, per_page
+        msg_type or None, status or None, page, per_page, q
     )
+    for m in msgs:
+        try:
+            m["_history"] = json.loads(m.get("replyHistory") or "[]")
+        except (TypeError, ValueError):
+            m["_history"] = [{"r": m.get("adminReply"), "at": m.get("repliedAt")}] if m.get("adminReply") else []
     total_pages = max(1, (total + per_page - 1) // per_page)
     page = min(page, total_pages)
     by_type = db.count_support_by_type()
@@ -953,6 +1002,10 @@ def support_page():
         ("new", "جديدة", by_status.get("new", 0)),
         ("replied", "تم الرد", by_status.get("replied", 0)),
     ]
+    avg_min = db.avg_support_reply_time(30)
+    avg_reply_txt = (
+        f"{avg_min:.0f} دقيقة" if avg_min is not None else "—"
+    )
     return render_template(
         "support.html",
         msgs=msgs,
@@ -961,8 +1014,12 @@ def support_page():
         total_pages=total_pages,
         msg_type=msg_type,
         status=status,
+        q=q,
         types=types,
         statuses=statuses,
+        avg_reply_txt=avg_reply_txt,
+        templates=db.get_support_templates(),
+        satisfaction_counts=db.get_support_satisfaction_counts(),
     )
 
 
@@ -982,6 +1039,13 @@ def support_reply(msg_id: int):
         texts.SUPPORT_ADMIN_REPLY.format(reply=reply),
     )
     if ok:
+        from bot.support_menu import satisfaction_keyboard
+
+        bridge.notify_member_blocking_markup(
+            msg["telegramUserId"],
+            texts.SUPPORT_SATISFACTION_ASK,
+            satisfaction_keyboard(msg_id),
+        )
         flash("تم إرسال الرد إلى العضو.", "success")
     else:
         flash(
@@ -996,7 +1060,106 @@ def support_reply(msg_id: int):
 def support_delete(msg_id: int):
     db.delete_support_message(msg_id)
     flash("تم حذف الرسالة.", "success")
+    return redirect(url_for("support_page", _anchor=""))
+
+
+@app.post("/support/<int:msg_id>/note")
+@login_required
+def support_note(msg_id: int):
+    msg = db.get_support_message(msg_id)
+    if msg is None:
+        abort(404)
+    note = request.form.get("note", "").strip()
+    db.set_support_note(msg_id, note)
+    flash("تم حفظ الملاحظة الداخلية.", "success")
+    return redirect(url_for("support_page", _anchor=f"msg-{msg_id}"))
+
+
+@app.post("/support/<int:msg_id>/ban")
+@login_required
+def support_ban_user(msg_id: int):
+    msg = db.get_support_message(msg_id)
+    if msg is None:
+        abort(404)
+    try:
+        hours = max(1, min(720, int(request.form.get("hours", "24"))))
+    except ValueError:
+        hours = 24
+    user_id = msg["telegramUserId"]
+    until = (db.utcnow() + timedelta(hours=hours))
+    db.ban_support_user(user_id, until.isoformat())
+    flash(f"تم حظر المستخدم من الدعم لمدة {hours} ساعة.", "success")
+    return redirect(url_for("support_page", _anchor=f"msg-{msg_id}"))
+
+
+@app.post("/support/<int:msg_id>/unban")
+@login_required
+def support_unban_user(msg_id: int):
+    msg = db.get_support_message(msg_id)
+    if msg is None:
+        abort(404)
+    if db.unban_support_user(msg["telegramUserId"]):
+        flash("تم فك حظر المستخدم من الدعم.", "success")
+    else:
+        flash("لا يوجد حظر سارٍ لهذا المستخدم.", "error")
+    return redirect(url_for("support_page", _anchor=f"msg-{msg_id}"))
+
+
+@app.post("/support/templates")
+@login_required
+def support_templates_save():
+    title = request.form.get("title", "").strip()
+    body = request.form.get("body", "").strip()
+    if title and body:
+        db.add_support_template(title, body)
+        flash("تم حفظ القالب.", "success")
+    else:
+        flash("أدخل عنوان النص ومحتواه.", "error")
     return redirect(url_for("support_page"))
+
+
+@app.post("/support/templates/<int:template_id>/delete")
+@login_required
+def support_template_delete(template_id: int):
+    db.delete_support_template(template_id)
+    flash("تم حذف القالب.", "success")
+    return redirect(url_for("support_page"))
+
+
+@app.route("/support/export.csv")
+@login_required
+def support_export_csv():
+    msg_type = request.args.get("type", "").strip()
+    status = request.args.get("status", "").strip()
+    q = request.args.get("q", "").strip()
+    msgs, _ = db.get_support_messages(
+        msg_type or None, status or None, 1, 100000, q
+    )
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        ["id", "userId", "name", "username", "type", "status",
+         "message", "adminReply", "satisfaction", "createdAt", "repliedAt"]
+    )
+    for m in msgs:
+        writer.writerow(
+            [
+                m["id"], m["telegramUserId"], m.get("telegramName") or "",
+                m.get("telegramUsername") or "", m.get("msgType") or "",
+                m.get("status") or "", m.get("message") or "",
+                m.get("adminReply") or "", m.get("satisfaction") or "",
+                m.get("createdAt") or "", m.get("repliedAt") or "",
+            ]
+        )
+    data = buffer.getvalue()
+    response = Response(
+        "\ufeff" + data,
+        mimetype="text/csv; charset=utf-8",
+    )
+    response.headers["Content-Disposition"] = (
+        "attachment; filename=support-export.csv"
+    )
+    return response
 
 
 @app.post("/support/cleanup-old")

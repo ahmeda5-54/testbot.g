@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -61,6 +62,36 @@ CREATE TABLE IF NOT EXISTS support_messages (
     status TEXT NOT NULL DEFAULT 'new',
     adminReply TEXT,
     repliedAt TEXT,
+    createdAt TEXT NOT NULL,
+    satisfaction TEXT NOT NULL DEFAULT 'none',
+    adminNote TEXT,
+    replyHistory TEXT NOT NULL DEFAULT '[]',
+    hasAttachment INTEGER NOT NULL DEFAULT 0,
+    attachmentRef TEXT
+);
+
+CREATE TABLE IF NOT EXISTS support_templates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    createdAt TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS support_bans (
+    telegramUserId INTEGER PRIMARY KEY,
+    bannedUntil TEXT NOT NULL,
+    reason TEXT,
+    createdAt TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS broadcasts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope TEXT NOT NULL DEFAULT 'all',
+    message TEXT,
+    photo TEXT,
+    targets INTEGER NOT NULL DEFAULT 0,
+    sent INTEGER NOT NULL DEFAULT 0,
+    failed INTEGER NOT NULL DEFAULT 0,
     createdAt TEXT NOT NULL
 );
 """
@@ -119,6 +150,24 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_support_created "
             "ON support_messages(createdAt)"
         )
+        _migrate_support_columns(conn)
+
+
+def _migrate_support_columns(conn: sqlite3.Connection) -> None:
+    """يضيف الأعمدة الجديدة بأمان لقواعد البيانات القديمة."""
+    cols = [row["name"] for row in conn.execute("PRAGMA table_info(support_messages)")]
+    mapping = {
+        "satisfaction": "TEXT NOT NULL DEFAULT 'none'",
+        "adminNote": "TEXT",
+        "replyHistory": "TEXT NOT NULL DEFAULT '[]'",
+        "hasAttachment": "INTEGER NOT NULL DEFAULT 0",
+        "attachmentRef": "TEXT",
+    }
+    for col, definition in mapping.items():
+        if col not in cols:
+            conn.execute(
+                f"ALTER TABLE support_messages ADD COLUMN {col} {definition}"
+            )
 
 
 def get_setting(key: str, default: str = "") -> str:
@@ -310,6 +359,8 @@ def add_support_message(
     msg_type: str = "أخرى",
     name: str | None = None,
     username: str | None = None,
+    has_attachment: int = 0,
+    attachment_ref: str | None = None,
 ) -> dict | None:
     message = (message or "").strip()
     if not message:
@@ -319,9 +370,9 @@ def add_support_message(
         cursor = conn.execute(
             """INSERT INTO support_messages
                (telegramUserId, telegramName, telegramUsername, msgType,
-                message, status, createdAt)
-               VALUES (?, ?, ?, ?, ?, 'new', ?)""",
-            (user_id, name, username, msg_type, message, now_iso()),
+                message, status, createdAt, hasAttachment, attachmentRef)
+               VALUES (?, ?, ?, ?, ?, 'new', ?, ?, ?)""",
+            (user_id, name, username, msg_type, message, now_iso(), has_attachment, attachment_ref),
         )
         conn.commit()
         msg_id = cursor.lastrowid
@@ -352,6 +403,7 @@ def get_support_messages(
     status: Optional[str] = None,
     page: int = 1,
     per_page: int = 20,
+    q: str = "",
 ) -> tuple[list[dict], int]:
     page = max(1, int(page))
     per_page = max(1, min(100, int(per_page)))
@@ -366,6 +418,14 @@ def get_support_messages(
     if status:
         clauses.append("status = ?")
         params.append(status)
+    q = (q or "").strip()
+    if q:
+        like = f"%{q}%"
+        clauses.append(
+            "(telegramName LIKE ? OR telegramUsername LIKE ? "
+            "OR telegramUserId LIKE ? OR message LIKE ?)"
+        )
+        params += [like, like, like, like]
     if clauses:
         where = " WHERE " + " AND ".join(clauses)
         query += where
@@ -417,6 +477,15 @@ def count_support_by_status() -> dict[str, int]:
     return {r["s"]: r["c"] for r in rows}
 
 
+def get_support_satisfaction_counts() -> dict[str, int]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT satisfaction AS s, COUNT(*) AS c FROM support_messages "
+            "GROUP BY satisfaction"
+        ).fetchall()
+    return {r["s"]: r["c"] for r in rows}
+
+
 def delete_old_replied_support(days: int) -> int:
     days = max(1, min(365, int(days)))
     cutoff = (utcnow() - timedelta(days=days)).isoformat()
@@ -431,15 +500,170 @@ def delete_old_replied_support(days: int) -> int:
 
 
 def mark_support_replied(msg_id: int, reply: str) -> dict:
+    """يُسجل الرد ويحفظه في سجل الردود الكامل، ويطلب تقييم العضو."""
+    reply = (reply or "").strip()[:4000]
+    timestamp = now_iso()
+    msg = get_support_message(msg_id)
+    history: list = []
+    if msg and msg.get("replyHistory"):
+        try:
+            history = json.loads(msg["replyHistory"])
+        except (TypeError, ValueError):
+            history = []
+    history.append({"r": reply, "at": timestamp})
     with get_connection() as conn:
         conn.execute(
             """UPDATE support_messages
-               SET status = 'replied', adminReply = ?, repliedAt = ?
+               SET status = 'replied', adminReply = ?, repliedAt = ?,
+                   replyHistory = ?, satisfaction = 'pending'
                WHERE id = ?""",
-            (reply, now_iso(), msg_id),
+            (reply, timestamp, json.dumps(history, ensure_ascii=False), msg_id),
         )
         conn.commit()
     return get_support_message(msg_id)
+
+
+def set_support_note(msg_id: int, note: str) -> None:
+    note = (note or "").strip()[:2000]
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE support_messages SET adminNote = ? WHERE id = ?",
+            (note, msg_id),
+        )
+        conn.commit()
+
+
+def reopen_support_message(msg_id: int) -> dict:
+    """يعيد فتح الرسالة بعد رد العضو أن المشكلة لم تُحل."""
+    with get_connection() as conn:
+        conn.execute(
+            """UPDATE support_messages
+               SET status = 'new', satisfaction = 'reopened', repliedAt = NULL
+               WHERE id = ?""",
+            (msg_id,),
+        )
+        conn.commit()
+    return get_support_message(msg_id)
+
+
+def set_support_satisfaction(msg_id: int, value: str) -> dict:
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE support_messages SET satisfaction = ? WHERE id = ?",
+            (value, msg_id),
+        )
+        conn.commit()
+    return get_support_message(msg_id)
+
+
+def avg_support_reply_time(days: int = 30) -> Optional[float]:
+    """متوسط زمن الرد (بالدقائق) للرسائل المُجاب عنها خلال آخر days يوماً."""
+    cutoff = (utcnow() - timedelta(days=max(1, min(365, days)))).isoformat()
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT createdAt, repliedAt FROM support_messages "
+            "WHERE status = 'replied' AND repliedAt IS NOT NULL "
+            "AND createdAt >= ?",
+            (cutoff,),
+        ).fetchall()
+    total_minutes = 0.0
+    count = 0
+    for row in rows:
+        try:
+            created = datetime.fromisoformat(row["createdAt"])
+            replied = datetime.fromisoformat(row["repliedAt"])
+        except ValueError:
+            continue
+        minutes = (replied - created).total_seconds() / 60
+        if minutes >= 0:
+            total_minutes += minutes
+            count += 1
+    if count == 0:
+        return None
+    return total_minutes / count
+
+
+# ── قوالب الردود الجاهزة ─────────────────────────────
+def add_support_template(title: str, body: str) -> dict:
+    title = (title or "").strip()[:100]
+    body = (body or "").strip()[:4000]
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "INSERT INTO support_templates (title, body, createdAt) "
+            "VALUES (?, ?, ?)",
+            (title, body, now_iso()),
+        )
+        conn.commit()
+        return {"id": cursor.lastrowid, "title": title, "body": body}
+
+
+def get_support_templates() -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT id, title, body FROM support_templates "
+            "ORDER BY id DESC"
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def delete_support_template(template_id: int) -> bool:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "DELETE FROM support_templates WHERE id = ?", (template_id,)
+        )
+        conn.commit()
+    return cursor.rowcount > 0
+
+
+# ── حظر الدعم المؤقت ────────────────────────────────
+def ban_support_user(user_id: int, until: str, reason: str = "") -> None:
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO support_bans "
+            "(telegramUserId, bannedUntil, reason, createdAt) VALUES (?, ?, ?, ?)",
+            (user_id, until, (reason or "")[:500], now_iso()),
+        )
+        conn.commit()
+
+
+def unban_support_user(user_id: int) -> bool:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "DELETE FROM support_bans WHERE telegramUserId = ?", (user_id,)
+        )
+        conn.commit()
+    return cursor.rowcount > 0
+
+
+def is_support_banned(user_id: int) -> Optional[dict]:
+    """يعيد معلومات الحظر إن كان الحظر ما زال سارياً."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM support_bans WHERE telegramUserId = ?", (user_id,)
+        ).fetchone()
+    if not row:
+        return None
+    ban = _row_to_dict(row)
+    try:
+        until = datetime.fromisoformat(ban["bannedUntil"])
+    except ValueError:
+        until = utcnow()
+    if until <= utcnow():
+        return None
+    return ban
+
+
+def delete_old_replied_support(days: int) -> int:
+    days = max(1, min(365, int(days)))
+    cutoff = (utcnow() - timedelta(days=days)).isoformat()
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "DELETE FROM support_messages "
+            "WHERE status = 'replied' AND repliedAt < ?",
+            (cutoff,),
+        )
+        conn.commit()
+    return cursor.rowcount
 
 
 def delete_support_message(msg_id: int) -> bool:
@@ -449,3 +673,32 @@ def delete_support_message(msg_id: int) -> bool:
         )
         conn.commit()
     return cursor.rowcount > 0
+
+
+# ── سجل الإشعارات العامة ────────────────────────────────
+def add_broadcast(
+    scope: str,
+    message: str,
+    photo: Optional[str],
+    targets: int,
+    sent: int,
+    failed: int,
+) -> int:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "INSERT INTO broadcasts "
+            "(scope, message, photo, targets, sent, failed, createdAt) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (scope, message or "", photo, targets, sent, failed, now_iso()),
+        )
+        conn.commit()
+    return cursor.lastrowid
+
+
+def get_last_broadcasts(limit: int = 10) -> list[dict]:
+    limit = max(1, min(50, int(limit)))
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM broadcasts ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]

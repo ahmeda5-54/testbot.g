@@ -22,6 +22,17 @@ START_WELCOME = """مرحباً بك.
 VERIFY_ALREADY = "تم تأكيد اشتراكك مسبقاً."
 VERIFY_IN_REVIEW = "طلبك قيد المراجعة من الإدارة. لا تكرر الإرسال."
 
+BTN_SUBSCRIBE = "🎟️ أريد الاشتراك بالقناة"
+SUBSCRIBE_INTRO = (
+    "🎟️ للاشتراك في القناة أرسل لنا إثباتاتك هنا بالترتيب وفق التعليمات.\n"
+    "لن تظهر بياناتك لأي جهة ولن تُستخدم إلا للتحقق من دخولك.\n"
+    "بعد استلامنا للإثباتات سيصلك تأكيد، وسيتم مراجعة طلبك من الإدارة، "
+    "وعند القبول يصلك رابط الانضمام تلقائياً.\n\n"
+    "ابدأ الآن 👇"
+)
+SUBSCRIBE_ALREADY = "🎉 حسابك مفعّل ومقبول مسبقاً في القناة."
+SUBSCRIBE_CANCEL = "تم إلغاء طلب الاشتراك.\nيمكنك العودة متى شئت."
+
 ASK_ACCOUNT = f"1/4 - أرسل {LABEL_ACCOUNT_FIELD} (أرقام فقط)."
 ASK_BROKER = f"أرسل {LABEL_BROKER_FIELD}."
 ASK_IS_MT = "هل الحساب MT4 أو MT5؟"
@@ -88,15 +99,53 @@ SUPPORT_CATEGORIES = {
 }
 SUPPORT_MENU_TITLE = "أهلاً بك في خدمة الدعم 💬\nاختر نوع رسالتك:"
 SUPPORT_AWAIT_MSG = "اكتب رسالتك الآن 👇 وسيرد عليك فريق الدعم هنا."
-SUPPORT_RECEIVED = "✅ وصلت رسالتك إلى فريق الدعم.\nسيردون عليك هنا قريباً."
+SUPPORT_ETA = "يرد عليك فريق الدعم عادة خلال 24 ساعة."
+SUPPORT_RECEIVED = (
+    "✅ وصلت رسالتك إلى فريق الدعم.\n"
+    "سيردون عليك هنا قريباً.\n"
+    + SUPPORT_ETA
+)
 SUPPORT_CANCEL = "تم إنهاء جلسة الدعم."
 SUPPORT_PROMPT_TEXT_ONLY = "أرسل رسالتك نصاً فقط 👇"
+SUPPORT_PHOTO_CAPTION_OR_TEXT = (
+    "🖼️ تم استلام الصورة.\n"
+    "إن أردت إضافة تفصيل مكتوب عن مشكلتك أرسله الآن، أو اكتب (هذا كل شيء) لإنهاء."
+)
+SUPPORT_DONE_ADDING = "حسناً، أرسلنا المرفق لفريق الدعم مع الرسالة."
 SUPPORT_PRIVACY_NOTE = "📨 فتحنا لك محادثة الدعم بالخاص — اختر نوع رسالتك."
+SUPPORT_MOVE_TO_BOT = (
+    "تم نقل خدمة الدعم إلى بوت مخصص 💬\n"
+    "اضغط الزر بالأسفل للدخول إليه مباشرة:"
+)
 SUPPORT_ADMIN_REPLY = "📨 رد من فريق الدعم:\n\n{reply}"
 SUPPORT_TOO_MANY = (
     "لقد أرسلت رسالة دعم مؤخراً 🕒\n"
     "انتظر دقيقة واحدة ثم أعد المحاولة، أو تابع سؤالك في نفس المحادثة."
 )
+
+SUPPORT_SATISFACTION_ASK = "هل حُلّت مشكلتك؟"
+BTN_SATISFIED = "✅ نعم، حُلّت"
+BTN_REOPEN = "🔄 لا، ما زالت"
+SUPPORT_SATISFACTION_DONE = "شكراً لتواصلك 🌟 نتمنى لك التوفيق."
+SUPPORT_REOPENED_MSG = (
+    "تم إعادة فتح طلبك لفريق الدعم 🔄\n"
+    "سيردون عليك هنا قريباً."
+)
+
+
+def support_banned_message(banned_until_iso: str) -> str:
+    from datetime import datetime, timezone
+
+    try:
+        until = datetime.fromisoformat(banned_until_iso)
+        delta = int((until - datetime.now(timezone.utc)).total_seconds())
+        duration = _format_duration(max(delta, 60))
+    except (ValueError, OverflowError):
+        duration = "مؤقتاً"
+    return (
+        "🚫 توقّف استقبال رسائل الدعم من حسابك حالياً.\n"
+        f"يمكنك المحاولة مجدداً خلال {duration}."
+    )
 
 
 def admin_new_request(member: dict) -> str:
@@ -112,6 +161,13 @@ def admin_new_request(member: dict) -> str:
 def admin_new_support_count(count: int) -> str:
     return (
         f"📥 رسائل دعم جديدة: {count}\n"
+        "راجعها ورد عليها من لوحة التحكم."
+    )
+
+
+def admin_reopened_support_count(count: int) -> str:
+    return (
+        f"🔄 أعيد فتح {count} طلب دعم (لم تُحل مشكلة العضو)\n"
         "راجعها ورد عليها من لوحة التحكم."
     )
 

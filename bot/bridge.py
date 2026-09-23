@@ -13,6 +13,7 @@ import db
 
 _bot = None
 _loop: Optional[asyncio.AbstractEventLoop] = None
+_support_bot = None
 awaiting_photo: set[int] = set()
 
 _SUPPORT_DIGEST_SECONDS = 30
@@ -37,6 +38,17 @@ def register(loop: asyncio.AbstractEventLoop, bot) -> None:
     _loop = loop
 
 
+def register_support_bot(bot) -> None:
+    """يسجل بوت الدعم المخصص — إن وُجد تُجرى محادثات الدعم عبره حصرياً."""
+    global _support_bot
+    _support_bot = bot
+
+
+def _support_target():
+    """البوت المستخدم لمحادثات الدعم (المخصص إن وُجد، وإلا الرئيسي)."""
+    return _support_bot if _support_bot is not None else _bot
+
+
 async def _send_with_retry(coro_factory) -> None:
     for attempt in range(4):
         try:
@@ -48,26 +60,29 @@ async def _send_with_retry(coro_factory) -> None:
             await asyncio.sleep(2 + attempt * 2)
 
 
-def _send(coro_factory) -> None:
-    if _bot is not None and _loop is not None:
+def _send_with_target(target, coro_factory) -> None:
+    if target is not None and _loop is not None:
         asyncio.run_coroutine_threadsafe(_send_with_retry(coro_factory), _loop)
 
 
 def notify_member(user_id: int, text: str) -> None:
-    if _bot is None:
+    target = _support_target()
+    if target is None:
         return
-    _send(lambda: _bot.send_message(user_id, text))
+    _send_with_target(target, lambda: target.send_message(user_id, text))
 
 
 def notify_member_with_support(user_id: int, text: str) -> None:
-    if _bot is None:
+    target = _support_target()
+    if target is None:
         return
     from bot.support_menu import support_start_keyboard
 
-    _send(
-        lambda: _bot.send_message(
+    _send_with_target(
+        target,
+        lambda: target.send_message(
             user_id, text, reply_markup=support_start_keyboard()
-        )
+        ),
     )
 
 
@@ -79,31 +94,56 @@ def notify_admins(
     for admin_id in admin_ids:
         path = Path(photo_path) if photo_path else None
         if path is not None and path.exists():
-            _send(
+            _send_with_target(
+                _bot,
                 lambda admin_id=admin_id, path=path: _bot.send_photo(
                     admin_id, FSInputFile(str(path)), caption=text
-                )
+                ),
             )
         else:
-            _send(lambda admin_id=admin_id: _bot.send_message(admin_id, text))
+            _send_with_target(
+                _bot, lambda admin_id=admin_id: _bot.send_message(admin_id, text)
+            )
 
 
-def _deliver_support_digest(admin_id: int) -> None:
+def notify_admins_photo(
+    admin_ids: list[int], file_id: str, caption: str
+) -> None:
+    target = _support_target()
+    if target is None:
+        return
+    for admin_id in admin_ids:
+        _send_with_target(
+            target,
+            lambda admin_id=admin_id: target.send_photo(
+                admin_id, file_id, caption=caption
+            ),
+        )
+
+
+def _deliver_support_digest(admin_id: int, reason: str = "") -> None:
     with _support_lock:
         count = _support_pending.pop(admin_id, 0)
         _support_timers.pop(admin_id, None)
     if count and _bot is not None:
         from bot import texts as bot_texts
 
-        _send(
-            lambda admin_id=admin_id: _bot.send_message(
-                admin_id, bot_texts.admin_new_support_count(count)
-            )
+        template = (
+            bot_texts.admin_reopened_support_count
+            if reason == "reopened"
+            else bot_texts.admin_new_support_count
         )
-        _debug(f"[support-digest] admin={admin_id} count={count}")
+
+        _send_with_target(
+            _bot,
+            lambda admin_id=admin_id: _bot.send_message(
+                admin_id, template(count)
+            ),
+        )
+        _debug(f"[support-digest] admin={admin_id} count={count} reason={reason}")
 
 
-def notify_admins_support(admin_ids: list[int]) -> None:
+def notify_admins_support(admin_ids: list[int], reason: str = "") -> None:
     """Debounced support notification to admins (collapses bursts into one
     digest message per admin) to avoid Telegram flood when many members
     message support at once."""
@@ -118,7 +158,7 @@ def notify_admins_support(admin_ids: list[int]) -> None:
             timer = threading.Timer(
                 _SUPPORT_DIGEST_SECONDS,
                 _deliver_support_digest,
-                args=(admin_id,),
+                args=(admin_id, reason),
             )
             timer.daemon = True
             _support_timers[admin_id] = timer
@@ -126,10 +166,25 @@ def notify_admins_support(admin_ids: list[int]) -> None:
 
 
 def notify_member_blocking(user_id: int, text: str, timeout: int = 15) -> bool:
-    if _bot is None or _loop is None:
+    return notify_member_blocking_markup(user_id, text, None, timeout)
+
+
+def notify_member_blocking_markup(
+    user_id: int,
+    text: str,
+    reply_markup=None,
+    timeout: int = 15,
+) -> bool:
+    target = _support_target()
+    if target is None or _loop is None:
         return False
     future = asyncio.run_coroutine_threadsafe(
-        _send_with_retry(lambda: _bot.send_message(user_id, text)), _loop
+        _send_with_retry(
+            lambda: target.send_message(
+                user_id, text, reply_markup=reply_markup
+            )
+        ),
+        _loop,
     )
     try:
         future.result(timeout)
@@ -142,26 +197,42 @@ def request_new_photo(user_id: int, text: str) -> None:
     awaiting_photo.add(user_id)
     if _bot is None:
         return
-    _send(lambda: _bot.send_message(user_id, text))
+    _send_with_target(_bot, lambda: _bot.send_message(user_id, text))
 
 
-async def _broadcast_task(text: str, member_ids: list[int]) -> None:
+async def _broadcast_task(
+    text: str, member_ids: list[int], photo_path: Optional[str] = None, scope: str = "all"
+) -> None:
     sent = 0
     failed = 0
+    photo = Path(photo_path) if photo_path else None
     for uid in member_ids:
         try:
-            await _bot.send_message(uid, text)
+            if photo is not None and photo.exists():
+                await _bot.send_photo(
+                    uid, FSInputFile(str(photo)), caption=text
+                )
+            else:
+                await _bot.send_message(uid, text)
             sent += 1
         except Exception:
             failed += 1
         await asyncio.sleep(0.07)
-    _debug(f"[broadcast] sent={sent} failed={failed}")
+    try:
+        db.add_broadcast(scope, text, str(photo) if photo else None, len(member_ids), sent, failed)
+    except Exception:
+        pass
+    _debug(f"[broadcast] scope={scope} targets={len(member_ids)} sent={sent} failed={failed}")
 
 
-def broadcast(text: str, member_ids: list[int]) -> None:
+def broadcast(
+    text: str, member_ids: list[int], photo_path: Optional[str] = None, scope: str = "all"
+) -> None:
     if _bot is None or _loop is None:
         return
-    asyncio.run_coroutine_threadsafe(_broadcast_task(text, member_ids), _loop)
+    asyncio.run_coroutine_threadsafe(
+        _broadcast_task(text, member_ids, photo_path, scope), _loop
+    )
 
 
 async def _post_verify_message() -> tuple[bool, int | None, str]:

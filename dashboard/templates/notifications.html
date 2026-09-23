@@ -11,7 +11,7 @@
   <div class="stat-card">
     <h3>إجمالي المشتركين</h3>
     <p>{{ total }}</p>
-    <span class="stat-sub">الذين سيصلهم الإشعار حسب النطاق المحدد</span>
+    <span class="stat-sub">السجلات في قاعدة البيانات</span>
   </div>
   <div class="stat-card warn">
     <h3>لم يكملوا التحقق</h3>
@@ -21,7 +21,7 @@
   <div class="stat-card success">
     <h3>مقبولون</h3>
     <p>{{ counts['VERIFIED'] }}</p>
-    <span class="stat-sub">يمكن استثناؤهم من النطاق</span>
+    <span class="stat-sub">يمكن إرسال إشعار لهم وحدهم</span>
   </div>
   <div class="stat-card danger">
     <h3>مرفوضون / منتهية مهلتهم</h3>
@@ -31,21 +31,29 @@
 </section>
 
 <form class="card settings-form" method="post" action="{{ url_for('broadcast') }}"
+      enctype="multipart/form-data"
       onsubmit="return confirm('إرسال هذا الإشعار للنطاق المحدد؟');">
   <p class="settings-hint">
-    أرسل رسالة نصية واحدة لكل المشتركين في النطاق المحدد. يُرسل في الخلفية ببطء
-    (حسب حدود تلغرامي) ولن تُغلق الصفحة.
+    أرسل رسالة نصية و/أو صورة لكل المشتركين في النطاق المحدد. يُرسل في الخلفية
+    ببطء (حسب حدود تلغرام) ولن تُغلق الصفحة. بعد الانتهاء يُحفظ سجل الإرسال
+    بالأسفل مع عدد الناجحين والفاشلين.
   </p>
 
   <label for="message">نص الإشعار</label>
-  <textarea id="message" name="message" rows="7"
-            required placeholder="اكتب رسالة الإشعار هنا...&#10;مثال: ⏰ تذكير: مهلة التحقق تنتهي خلال ساعات قليلة، أرسل صورة الرصيد الآن."></textarea>
+  <textarea id="message" name="message" rows="6"
+            placeholder="اكتب رسالة الإشعار هنا...&#10;مثال: ⏰ تذكير: مهلة التحقق تنتهي خلال ساعات قليلة، أرسل صورة الرصيد الآن."></textarea>
+
+  <label for="photo">صورة مرفقة (اختياري — تُرسل للجميع مع النص)</label>
+  <input type="file" id="photo" name="photo" accept="image/jpeg,image/png,image/webp">
+  <p class="settings-hint">إن رفعت صورة، سيصل للمشترك إشعار صورة يحمل نفس النص كتعليق.</p>
 
   <label for="scope">النطاق (من يستلم الإشعار)</label>
   <select id="scope" name="scope">
     <option value="all">الجميع ({{ total }} مشترك)</option>
     <option value="pending">الذين لم يكملوا فقط (NOT_STARTED + PENDING)</option>
     <option value="unverified">الجميع ما عدا المقبولون والمُزالون</option>
+    <option value="verified">المقبولون فقط ({{ counts['VERIFIED'] }})</option>
+    <option value="rejected">المرفوضون + المنتهية مهلة ({{ counts['REJECTED'] + counts['EXPIRED'] }})</option>
   </select>
 
   <button class="btn btn-check" type="submit">📢 إرسال الإشعار الآن</button>
@@ -54,4 +62,44 @@
     (الحالة في الشريط الجانبي) قبل الضغط.
   </p>
 </form>
+
+{% if broadcasts %}
+<h3 class="settings-section-title">📤 سجل آخر الإشعارات</h3>
+<section class="card" style="overflow-x:auto;">
+  <table style="width:100%; border-collapse:collapse; font-size:13px;">
+    <thead>
+      <tr>
+        <th style="text-align:start; padding:6px;">الوقت</th>
+        <th style="text-align:start; padding:6px;">النطاق</th>
+        <th style="text-align:start; padding:6px;">النص</th>
+        <th style="text-align:center; padding:6px;">المستهدفون</th>
+        <th style="text-align:center; padding:6px;">وصل ✅</th>
+        <th style="text-align:center; padding:6px;">فشل ❌</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for b in broadcasts %}
+      <tr>
+        <td style="padding:6px; white-space:nowrap;">{{ fmt(b.createdAt) }}</td>
+        <td style="padding:6px; white-space:nowrap;">
+          {% if b.scope == 'all' %}الجميع
+          {% elif b.scope == 'pending' %}لم يكملوا
+          {% elif b.scope == 'unverified' %}غير موثقين
+          {% elif b.scope == 'verified' %}مقبولون
+          {% elif b.scope == 'rejected' %}مرفوضون/منتهون
+          {% else %}{{ b.scope }}{% endif %}
+          {% if b.photo %}<span class="chip chip-warn">🖼️</span>{% endif %}
+        </td>
+        <td style="padding:6px; max-width:360px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+          {{ b.message or '(بدون نص)' }}
+        </td>
+        <td style="padding:6px; text-align:center;">{{ b.targets }}</td>
+        <td style="padding:6px; text-align:center; color:var(--success);">{{ b.sent }}</td>
+        <td style="padding:6px; text-align:center; color:var(--danger);">{{ b.failed }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
 {% endblock %}

@@ -133,29 +133,44 @@ async def set_step(step: str, state: FSMContext) -> None:
     await state.set_state(STEP_STATE[step])
 
 
-async def save_profile(message: Message) -> None:
-    user = message.from_user
-    if user is None:
-        return
+def save_profile_data(
+    user_id: int, username: str | None, full_name: str
+) -> None:
     db.upsert_member(
-        user.id,
-        telegramUsername=user.username,
-        telegramName=user.full_name,
+        user_id,
+        telegramUsername=username,
+        telegramName=full_name,
         channelId=config.CHANNEL_ID,
     )
 
 
-async def submit_done(message: Message, state: FSMContext) -> None:
-    member = db.get_member(message.from_user.id)
+async def save_profile(message: Message) -> None:
+    user = message.from_user
+    if user is None:
+        return
+    save_profile_data(user.id, user.username, user.full_name)
+
+
+async def submit_done_for(
+    user_id: int, message: Message, state: FSMContext
+) -> None:
+    member = db.get_member(user_id)
     if member is None:
         return
-    db.submit_member(member["telegramUserId"])
-    member = db.get_member(member["telegramUserId"])
+    db.submit_member(user_id)
+    member = db.get_member(user_id)
     await state.clear()
     await safe_answer(
         message, texts.SUBMITTED, reply_markup=support_start_keyboard()
     )
     await notify_admins(member)
+
+
+async def submit_done(message: Message, state: FSMContext) -> None:
+    user = message.from_user
+    if user is None:
+        return
+    await submit_done_for(user.id, message, state)
 
 
 async def notify_admins(member: dict) -> None:
@@ -171,19 +186,25 @@ async def notify_admins(member: dict) -> None:
     )
 
 
-async def begin(message: Message, state: FSMContext) -> None:
-    db.mark_talked(message.from_user.id)
-    await save_profile(message)
-    member = db.get_member(message.from_user.id)
+async def begin_for(
+    user_id: int,
+    username: str | None,
+    full_name: str,
+    message: Message,
+    state: FSMContext,
+) -> None:
+    db.mark_talked(user_id)
+    save_profile_data(user_id, username, full_name)
+    member = db.get_member(user_id)
     if member is not None and (
         not member.get("deadlineAt") or member["status"] == db.EXPIRED
     ):
-        db.start_deadline(member["telegramUserId"])
-    member = db.get_member(message.from_user.id)
+        db.start_deadline(user_id)
+    member = db.get_member(user_id)
 
     first = first_pending_step(member)
     if first is None:
-        await submit_done(message, state)
+        await submit_done_for(user_id, message, state)
         return
 
     await set_step(first, state)
@@ -199,8 +220,7 @@ async def begin(message: Message, state: FSMContext) -> None:
             message,
             texts.RESUME_PROMPT.format("\n• ".join(rest))
             + "\n────────\n"
-            + body
-            + ("" if first == "server" else ""),
+            + body,
             reply_markup=mt_keyboard() if first == "server" else None,
         )
     else:
@@ -209,3 +229,10 @@ async def begin(message: Message, state: FSMContext) -> None:
             body,
             reply_markup=mt_keyboard() if first == "server" else None,
         )
+
+
+async def begin(message: Message, state: FSMContext) -> None:
+    user = message.from_user
+    if user is None:
+        return
+    await begin_for(user.id, user.username, user.full_name, message, state)

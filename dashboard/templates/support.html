@@ -23,23 +23,44 @@
     <p>{{ statuses[2][2] }}</p>
     <span class="stat-sub">أُرسل إليها رد</span>
   </div>
+  <div class="stat-card">
+    <h3>متوسط زمن الرد</h3>
+    <p>{{ avg_reply_txt }}</p>
+    <span class="stat-sub">آخر 30 يوم</span>
+  </div>
 </section>
+
+{% if satisfaction_counts.get('satisfied') or satisfaction_counts.get('reopened') %}
+<div class="filter-bar">
+  <div class="pills">
+    <span class="pill-badge" style="background:var(--success); color:#fff;">😊 راضٍ: {{ satisfaction_counts.get('satisfied', 0) }}</span>
+    <span class="pill-badge" style="background:var(--warn); color:#fff;">🔄 أعيد فتحها: {{ satisfaction_counts.get('reopened', 0) }}</span>
+  </div>
+</div>
+{% endif %}
 
 <div class="filter-bar">
   <div class="pills">
     {% for key, label, c in types %}
-      <a class="pill {{ 'active' if msg_type == key }}" href="{{ url_for('support_page', type=key, status=status) }}">
+      <a class="pill {{ 'active' if msg_type == key }}" href="{{ url_for('support_page', type=key, status=status, q=q) }}">
         {{ label }} <span class="pill-badge">{{ c }}</span>
       </a>
     {% endfor %}
   </div>
   <div class="pills">
     {% for key, label, c in statuses %}
-      <a class="pill {{ 'active' if status == key }}" href="{{ url_for('support_page', type=msg_type, status=key) }}">
+      <a class="pill {{ 'active' if status == key }}" href="{{ url_for('support_page', type=msg_type, status=key, q=q) }}">
         {{ label }} <span class="pill-badge">{{ c }}</span>
       </a>
     {% endfor %}
   </div>
+  <form class="inline-form" method="get" action="{{ url_for('support_page') }}">
+    <input type="hidden" name="type" value="{{ msg_type }}">
+    <input type="hidden" name="status" value="{{ status }}">
+    <input type="search" name="q" value="{{ q }}" placeholder="بحث: اسم / يوزرنيم / ID / نص الرسالة" style="min-width:220px;">
+    <button class="btn btn-sm" type="submit">🔎 بحث</button>
+    <a class="btn btn-sm" href="{{ url_for('support_export_csv', type=msg_type, status=status, q=q) }}">⬇️ تصدير CSV</a>
+  </form>
   <div class="pills">
     <form class="inline-form" method="post" action="{{ url_for('support_cleanup_old') }}"
           onsubmit="return confirm('حذف الرسائل المُجاب عنها الأقدم من عدد الأيام؟');">
@@ -53,11 +74,11 @@
 {% if total_pages > 1 %}
 <nav class="pagination">
   {% if page > 1 %}
-  <a class="pill" href="{{ url_for('support_page', type=msg_type, status=status, page=page-1) }}">→ السابق</a>
+  <a class="pill" href="{{ url_for('support_page', type=msg_type, status=status, q=q, page=page-1) }}">→ السابق</a>
   {% endif %}
   <span class="page-info">صفحة {{ page }} من {{ total_pages }} ({{ total }} رسالة)</span>
   {% if page < total_pages %}
-  <a class="pill" href="{{ url_for('support_page', type=msg_type, status=status, page=page+1) }}">التالي ←</a>
+  <a class="pill" href="{{ url_for('support_page', type=msg_type, status=status, q=q, page=page+1) }}">التالي ←</a>
   {% endif %}
 </nav>
 {% endif %}
@@ -71,11 +92,17 @@
         {{ 'جديدة' if m.status == 'new' else 'تم الرد' }}
       </span>
       <span class="chip chip-neutral">{{ m.msgType }}</span>
+      {% if m.hasAttachment %}<span class="chip chip-warn" title="أُقصيت صورة/مرفق مع هذه الرسالة">📎 مرفق</span>{% endif %}
+      {% if m.satisfaction == 'satisfied' %}<span class="chip chip-ok">😊 حُلّت</span>
+      {% elif m.satisfaction == 'reopened' %}<span class="chip chip-bad">🔄 أعيد فتحها</span>
+      {% elif m.satisfaction == 'pending' %}<span class="chip chip-neutral">⏳ بانتظار تقييم</span>{% endif %}
       <small style="color:var(--muted)">{{ fmt(m.createdAt) }}</small>
     </div>
     <div class="card-head-actions">
       <div class="user-cell">
-        <span class="user-name">{{ m.telegramName or '-' }}</span>
+        <a class="user-name" href="{{ url_for('member_detail', user_id=m.telegramUserId) }}" target="_blank">
+          {{ m.telegramName or '-' }} 🔗
+        </a>
         <span class="user-meta">
           {% if m.telegramUsername %}@{{ m.telegramUsername }} · {% endif %}
           <code>{{ m.telegramUserId }}</code>
@@ -84,28 +111,147 @@
     </div>
   </div>
 
+  {% if m.attachmentRef %}
+  <p class="channel-preview" style="margin-bottom:10px;">
+    🖼️ أُرسلت لقطة مع هذه الرسالة — شاهدها في محادثة التلغرام مع الأدمن.
+  </p>
+  {% endif %}
+
   <p class="channel-preview" style="white-space:pre-wrap; margin-bottom:14px;">{{ m.message }}</p>
 
-  {% if m.status == 'replied' and m.adminReply %}
+  {% if m._history %}
+  <div class="support-history" style="margin-bottom:12px;">
+    <div style="font-size:12px; color:var(--muted); margin-bottom:5px;">سجل الردود:</div>
+    {% for h in m._history %}
+    <div class="flash {{ 'success' if loop.last else '' }}" style="margin-bottom:5px; white-space:pre-wrap;">
+      <div style="opacity:.75; font-size:12px; margin-bottom:3px;">رد {{ loop.index }} ({{ fmt(h.at) }}):</div>
+      {{ h.r }}
+    </div>
+    {% endfor %}
+  </div>
+  {% elif m.status == 'replied' and m.adminReply %}
   <div class="flash success" style="margin-bottom:12px;">
-    <div style="opacity:.75; font-size:12px; margin-bottom:3px;">ردك الذي أُرسل ({{ fmt(m.repliedAt) }}):</div>
+    <div style="opacity:.75; font-size:12px; margin-bottom:3px;">ردك ({{ fmt(m.repliedAt) }}):</div>
     {{ m.adminReply }}
   </div>
   {% endif %}
 
   <form class="note-form" method="post" action="{{ url_for('support_reply', msg_id=m.id) }}">
     <label for="reply-{{ m.id }}">{% if m.status == 'new' %}كتابة الرد وإرساله إلى العضو{% else %}رد إضافي إلى العضو{% endif %}</label>
-    <textarea id="reply-{{ m.id }}" name="reply" rows="2" placeholder="اكتب الرد هنا... سيُرسل مباشرة إلى العضو"></textarea>
+    {% if templates %}
+    <select class="tpl-pick" data-mid="{{ m.id }}" style="width:100%; margin-bottom:6px;">
+      <option value="">📋 أدخل من قالب جاهز...</option>
+      {% for t in templates %}
+      <option value="{{ t.id }}">{{ t.title }}</option>
+      {% endfor %}
+    </select>
+    {% endif %}
+    <textarea id="reply-{{ m.id }}" name="reply" rows="2"
+              data-mid="{{ m.id }}"
+              data-member-name="{{ m.telegramName or '' }}"
+              data-member-id="{{ m.telegramUserId }}"
+              data-mtype="{{ m.msgType }}"
+              placeholder="اكتب الرد هنا... سيُرسل مباشرة إلى العضو"></textarea>
     <button class="btn" type="submit">📨 إرسال الرد إلى العضو</button>
   </form>
 
-  <form method="post" action="{{ url_for('support_delete', msg_id=m.id) }}"
-        onsubmit="return confirm('حذف هذه الرسالة نهائياً؟');">
-    <button class="btn btn-danger btn-sm" type="submit">🗑 حذف الرسالة</button>
-  </form>
+  <details class="support-extra" style="margin-bottom:12px;">
+    <summary style="cursor:pointer; color:var(--muted); font-size:13px;">⚙️ أدوات إضافية (ملاحظة داخلية / حفظ كقالب)</summary>
+    <form class="inline-form" method="post" action="{{ url_for('support_note', msg_id=m.id) }}" style="margin-top:8px;">
+      <label style="font-size:12px; color:var(--muted);">ملاحظة داخلية (يراها الأدمن فقط):</label>
+      <input type="text" name="note" value="{{ m.adminNote or '' }}" placeholder="اذكر ملاحظة السرية...">
+      <button class="btn btn-sm" type="submit">حفظ الملاحظة</button>
+    </form>
+    <form class="inline-form" method="post" action="{{ url_for('support_templates_save') }}" style="margin-top:8px;">
+      <input type="hidden" name="title" value="من رسالة #{{ m.id }}">
+      <input type="hidden" name="body" value="{{ m.message }}">
+      <button class="btn btn-sm" type="submit">💾 حفظ نص هذه الرسالة كقالب</button>
+    </form>
+  </details>
+
+  <div class="card-head-actions">
+    <form class="inline-form" method="post" action="{{ url_for('support_ban_user', msg_id=m.id) }}"
+          onsubmit="return confirm('حظر هذا المستخدم من إرسال رسائل الدعم؟');">
+      <label for="ban-hours" style="font-size:12px; color:var(--muted);">حظر من الدعم</label>
+      <input type="number" id="ban-hours" name="hours" value="24" min="1" max="720" style="width:70px;">
+      <span style="font-size:12px; color:var(--muted);">ساعة</span>
+      <button class="btn btn-sm btn-danger" type="submit">🚫 حظر</button>
+    </form>
+    <form class="inline-form" method="post" action="{{ url_for('support_unban_user', msg_id=m.id) }}">
+      <button class="btn btn-sm" type="submit">🔓 فك الحظر</button>
+    </form>
+    <form method="post" action="{{ url_for('support_delete', msg_id=m.id) }}"
+          onsubmit="return confirm('حذف هذه الرسالة نهائياً؟');">
+      <button class="btn btn-danger btn-sm" type="submit">🗑 حذف الرسالة</button>
+    </form>
+  </div>
 </section>
 {% endfor %}
 {% else %}
 <p class="empty">لا توجد رسائل دعم في هذا النطاق.</p>
 {% endif %}
+
+{% if templates %}
+<h3 class="settings-section-title">📋 ردود جاهزة (قوالب)</h3>
+<section class="card" style="margin-bottom:16px;">
+  <div class="pills" style="flex-wrap:wrap;">
+    {% for t in templates %}
+    <span class="pill" style="cursor:pointer;" onclick="fillFirstFromTemplate({{ t.id }})" title="{{ t.body }}">{{ t.title }}</span>
+    <form class="inline-form" method="post" action="{{ url_for('support_template_delete', template_id=t.id) }}"
+          onsubmit="return confirm('حذف هذا القالب؟');">
+      <button class="btn btn-danger btn-sm" type="submit">✕</button>
+    </form>
+    {% endfor %}
+  </div>
+  <p class="settings-hint" style="margin-top:6px;">اضغط على قالب لملء أول مربع رد فارغ. يمكنك استخدام المتغيرات في نص القالب:
+    <code>{name}</code> اسم العضو، <code>{id}</code> معرفه، <code>{type}</code> نوع الرسالة.</p>
+</section>
+{% endif %}
+
+<form class="card settings-form" method="post" action="{{ url_for('support_templates_save') }}">
+  <h4 class="ub-steps-title">📋 إضافة رد جاهز جديد</h4>
+  <label>عنوان القالب (مثال: تأخير المراجعة)</label>
+  <input type="text" name="title" placeholder="عنوان سريع يظهر لك فقط" required>
+  <label>نص القالب</label>
+  <textarea name="body" rows="3" placeholder="نص الرد الذي سترسله للأعضاء..."></textarea>
+  <button class="btn" type="submit">حفظ القالب</button>
+</form>
+
+<script>
+var SUPPORT_TEMPLATES = {{ templates | list | tojson }};
+
+function firstReplyArea() {
+  var areas = document.querySelectorAll('textarea[name="reply"]');
+  for (var i = 0; i < areas.length; i++) {
+    if (areas[i].value === '') { return areas[i]; }
+  }
+  return areas[areas.length - 1] || null;
+}
+
+function applyTemplate(tplId, textarea) {
+  if (!textarea) return;
+  var tpl = null;
+  for (var i = 0; i < SUPPORT_TEMPLATES.length; i++) {
+    if (SUPPORT_TEMPLATES[i].id === tplId) { tpl = SUPPORT_TEMPLATES[i]; break; }
+  }
+  if (!tpl) return;
+  textarea.value = tpl.body
+    .replace(/\{name\}/g, textarea.dataset.memberName || '')
+    .replace(/\{id\}/g, textarea.dataset.memberId || '')
+    .replace(/\{type\}/g, textarea.dataset.mtype || '');
+  textarea.focus();
+}
+
+function fillFirstFromTemplate(tplId) {
+  applyTemplate(tplId, firstReplyArea());
+}
+
+document.addEventListener('change', function (e) {
+  var sel = e.target && e.target.closest ? e.target.closest('.tpl-pick') : null;
+  if (!sel || !sel.value) return;
+  var ta = document.querySelector('textarea[name="reply"][data-mid="' + sel.dataset.mid + '"]');
+  if (!ta) return;
+  applyTemplate(parseInt(sel.value, 10), ta);
+});
+</script>
 {% endblock %}
