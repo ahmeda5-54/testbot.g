@@ -197,6 +197,40 @@ def _write_env(updates: dict) -> None:
         "\n".join(f"{key}={value}" for key, value in data.items()) + "\n",
         encoding="utf-8",
     )
+    # طبّق القيم فوراً في الذاكرة حتى تلتقطها حلقة البوت بعد إعادة التشغيل
+    _apply_to_config(updates)
+
+
+def _apply_to_config(updates: dict) -> None:
+    raw_token = updates.get("BOT_TOKEN")
+    if raw_token is not None:
+        config.BOT_TOKEN = raw_token
+    raw_username = updates.get("BOT_USERNAME")
+    if raw_username is not None:
+        config.BOT_USERNAME = raw_username
+        config.VERIFY_URL = (
+            f"https://t.me/{config.BOT_USERNAME}?start=verify"
+            if config.BOT_USERNAME
+            else ""
+        )
+    raw_channel = updates.get("CHANNEL_ID")
+    if raw_channel is not None:
+        try:
+            config.CHANNEL_ID = int(raw_channel)
+        except ValueError:
+            pass
+    raw_admins = updates.get("ADMIN_IDS")
+    if raw_admins is not None:
+        config.ADMIN_IDS = [int(x) for x in raw_admins.split(",") if x.strip().lstrip("-").isdigit()]
+    raw_deadline = updates.get("DEADLINE_HOURS")
+    if raw_deadline is not None:
+        try:
+            config.DEADLINE_HOURS = int(raw_deadline)
+        except ValueError:
+            pass
+    raw_proxy = updates.get("PROXY_URL")
+    if raw_proxy is not None:
+        config.PROXY_URL = raw_proxy.strip() or None
 
 
 @app.post("/settings/general")
@@ -243,15 +277,22 @@ def save_general_settings():
             "PROXY_URL": proxy_raw,
         }
     )
-    threading.Timer(1.5, os._exit, [0]).start()
-    return render_template("restarting.html", message="تم حفظ الإعدادات العامة — جارٍ إعادة تشغيل النظام لتطبيقها...")
+    _request_bot_restart()
+    return render_template("restarting.html", message="تم حفظ الإعدادات العامة — جارٍ إعادة تشغيل البوت لتطبيقها...")
 
 
 @app.post("/restart")
 @login_required
 def restart_app():
-    threading.Timer(1.0, os._exit, [0]).start()
-    return render_template("restarting.html", message="جارٍ إعادة تشغيل النظام...")
+    _request_bot_restart()
+    return render_template("restarting.html", message="جارٍ إعادة تشغيل البوت...")
+
+
+def _request_bot_restart() -> None:
+    import config as _config
+
+    _config.RESTART_FLAG.parent.mkdir(exist_ok=True)
+    _config.RESTART_FLAG.touch()
 
 
 @app.route("/settings", methods=["GET", "POST"])

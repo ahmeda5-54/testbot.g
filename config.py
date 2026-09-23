@@ -53,4 +53,7 @@ DATA_DIR.mkdir(exist_ok=True)
 UPLOADS_DIR.mkdir(exist_ok=True)
 DB_PATH = DATA_DIR / "bot.db"
 
+# علم إعادة تشغيل البوت فقط (بدل قتل العملية كلها)
+RESTART_FLAG = DATA_DIR / "restart.flag"
+
 VERIFY_URL = f"https://t.me/{BOT_USERNAME}?start=verify" if BOT_USERNAME else ""

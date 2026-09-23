@@ -83,6 +83,13 @@ async def run() -> None:
         pass
 
     while True:
+        if config.RESTART_FLAG.is_file():
+            try:
+                config.RESTART_FLAG.unlink()
+            except OSError:
+                pass
+            print("[bot] restart requested — rebooting with new settings", flush=True)
+            break
         try:
             await dp.start_polling(bot, polling_timeout=3)
         except Exception as exc:
