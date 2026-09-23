@@ -17,6 +17,8 @@
     {% set active_nav = 'notifications' %}
   {% elif request.endpoint in ('access_logs_page', 'access_logs_clear') %}
     {% set active_nav = 'access' %}
+  {% elif request.endpoint in ('entries_page', 'entry_detail', 'entries_manual', 'entries_follow', 'entries_edit', 'entries_delete') %}
+    {% set active_nav = 'entries' %}
   {% elif request.endpoint in ('support_page', 'support_reply', 'support_delete') %}
     {% set active_nav = 'support' %}
   {% elif request.endpoint in ('settings_page', 'save_general_settings', 'save_userbot_settings', 'run_userbot_sync', 'list_userbot_groups', 'restart_app') %}
@@ -53,6 +55,9 @@
       </a>
       <a class="nav-link {{ 'active' if active_nav == 'settings' }}" href="{{ url_for('settings_page') }}">
         <span class="nav-ic">⚙️</span> إعدادات البوت والتحقق
+      </a>
+      <a class="nav-link {{ 'active' if active_nav == 'entries' }}" href="{{ url_for('entries_page') }}">
+        <span class="nav-ic">📈</span> دخولات السوق
       </a>
       <a class="nav-link {{ 'active' if active_nav == 'access' }}" href="{{ url_for('access_logs_page') }}">
         <span class="nav-ic">🛂</span> سجل الدخولات

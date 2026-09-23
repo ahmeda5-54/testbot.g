@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}دخولات السوق{% endblock %}
+
+{% block page_title %}دخولات السوق — صفقات القناة{% endblock %}
+
+{% block topbar_actions %}
+<a class="btn btn-outline" href="{{ url_for('access_logs_page') }}">🛂 سجل الدخولات</a>
+<a class="btn btn-outline" href="{{ url_for('notifications') }}">📢 إشعارات</a>
+{% endblock %}
+
+{% block content %}
+<section class="stats-grid">
+  <div class="stat-card">
+    <h3>دخولات نشطة</h3>
+    <p>{{ counts['ACTIVE'] }}</p>
+    <span class="stat-sub">بانتظار ستوب أو تأمين</span>
+  </div>
+  <div class="stat-card warn">
+    <h3>مؤمَّنة</h3>
+    <p>{{ counts['INSURED'] }}</p>
+    <span class="stat-sub">نُقلت أهدافها الأولى</span>
+  </div>
+  <div class="stat-card danger">
+    <h3>توقفت (ستوب)</h3>
+    <p>{{ counts['STOPPED'] }}</p>
+    <span class="stat-sub">ضُرِب الستوب</span>
+  </div>
+  <div class="stat-card success">
+    <h3>مغلقة</h3>
+    <p>{{ counts['CLOSED'] }}</p>
+    <span class="stat-sub">أُغلقت يدوياً</span>
+  </div>
+</section>
+
+<div class="filter-bar">
+  <div class="pills">
+    <a class="pill {{ 'active' if not status }}" href="{{ url_for('entries_page') }}">الكل</a>
+    {% for key, label in status_labels.items() %}
+    <a class="pill {{ 'active' if status == key }}" href="{{ url_for('entries_page', status=key) }}">
+      {{ label }} <span class="pill-badge">{{ counts[key] }}</span>
+    </a>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="card settings-form" style="margin-bottom:4px;">
+  <h3 class="settings-section-title">➕ إدخال دخول يدوي</h3>
+  <form method="post" action="{{ url_for('entries_manual') }}">
+    <label for="manual_text">الصق رسالة الدخول من القناة هنا (يُحلل تلقائياً):</label>
+    <textarea id="manual_text" name="text" rows="3"
+              placeholder="مثال: بيع زوج من 4320 كسر الخط بشمعة دقيقة، ستوب 40 نقطة..."></textarea>
+    <button class="btn btn-check" type="submit">تسجيل كدخول جديد</button>
+  </form>
+</div>
+
+{% if entries %}
+<div class="table-wrap">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>الحالة</th>
+        <th>اتجاه</th>
+        <th>السعر</th>
+        <th>الستوب</th>
+        <th>متابعات</th>
+        <th>الصورة</th>
+        <th>متى</th>
+        <th>إجراءات</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in entries %}
+      <tr>
+        <td>
+          {% if e.status == 'ACTIVE' %}<span class="status" style="background:#3b82f6;">نشط</span>
+          {% elif e.status == 'INSURED' %}<span class="status" style="background:#f59e0b;">مؤمَّن</span>
+          {% elif e.status == 'STOPPED' %}<span class="status" style="background:#ef4444;">ستوب</span>
+          {% else %}<span class="status" style="background:#10b981;">مغلق</span>{% endif %}
+        </td>
+        <td><strong style="color:{{ '#34d399' if e.direction == 'BUY' else ('#f87171' if e.direction == 'SELL' else 'inherit') }};">{{ e.direction or '—' }}</strong></td>
+        <td><code>{{ e.priceLevel or '—' }}</code></td>
+        <td>{% if e.stopPoints %}{{ e.stopPoints }} نقطة{% else %}—{% endif %}</td>
+        <td><span class="chip chip-neutral">{{ updates_counts[e.id] }}</span></td>
+        <td>
+          {% if e.imagePath %}
+          <a href="{{ url_for('entry_detail', entry_id=e.id) }}">
+            <img src="{{ url_for('uploads', filename=e.imagePath) }}" alt="صورة الدخول"
+                 style="width:52px; height:52px; object-fit:cover; border-radius:8px; border:1px solid var(--border);">
+          </a>
+          {% else %}—{% endif %}
+        </td>
+        <td style="white-space:nowrap;">{{ fmt(e.createdAt) }}</td>
+        <td>
+          <div style="display:flex; gap:6px; flex-wrap:wrap;">
+            <a class="btn btn-sm btn-outline" href="{{ url_for('entry_detail', entry_id=e.id) }}">التفاصيل</a>
+            <form method="post" action="{{ url_for('entries_follow', entry_id=e.id) }}"
+                  onsubmit="return confirm('تسجيل ستوب على هذا الدخول؟');">
+              <input type="hidden" name="kind" value="stop">
+              <button class="btn btn-danger btn-sm">ستوب</button>
+            </form>
+            <form method="post" action="{{ url_for('entries_delete', entry_id=e.id) }}"
+                  onsubmit="return confirm('حذف هذا الدخول نهائياً؟');">
+              <button class="btn btn-delete-record btn-sm">حذف</button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="empty">لا توجد دخولات بعد. ستظهر هنا تلقائياً عند إرسال صاحب القناة دخولاً جديداً (نصاً أو صورة).</p>
+{% endif %}
+{% endblock %}

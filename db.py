@@ -104,6 +104,35 @@ CREATE TABLE IF NOT EXISTS access_logs (
     userAgent TEXT,
     createdAt TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    direction TEXT NOT NULL DEFAULT '',
+    priceLevel TEXT NOT NULL DEFAULT '',
+    stopPoints INTEGER NOT NULL DEFAULT 0,
+    conditionText TEXT,
+    status TEXT NOT NULL DEFAULT 'ACTIVE',
+    imagePath TEXT,
+    imageHash TEXT,
+    imageFileId TEXT,
+    rawText TEXT,
+    sourceMessageId INTEGER,
+    createdAt TEXT NOT NULL,
+    updatedAt TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS entry_updates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entryId INTEGER NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'note',
+    value TEXT,
+    price TEXT,
+    imagePath TEXT,
+    imageHash TEXT,
+    rawText TEXT,
+    sourceMessageId INTEGER,
+    createdAt TEXT NOT NULL
+);
 """
 
 DEFAULT_SETTINGS = {
@@ -162,6 +191,14 @@ def init_db() -> None:
         )
         _migrate_support_columns(conn)
         _migrate_template_type_column(conn)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entry_updates_entry "
+            "ON entry_updates(entryId)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entries_status "
+            "ON entries(status)"
+        )
 
 
 def _migrate_template_type_column(conn: sqlite3.Connection) -> None:
@@ -781,3 +818,160 @@ def get_last_broadcasts(limit: int = 10) -> list[dict]:
             "SELECT * FROM broadcasts ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
     return [_row_to_dict(r) for r in rows]
+
+
+# ── دخولات القناة (الصفقات/التحديثات) ────────────────────
+def add_entry(
+    direction: str = "",
+    price_level: str = "",
+    stop_points: int = 0,
+    condition_text: str = "",
+    image_path: Optional[str] = None,
+    image_hash: str = "",
+    image_file_id: str = "",
+    raw_text: str = "",
+    source_message_id: Optional[int] = None,
+) -> dict:
+    now = now_iso()
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """INSERT INTO entries
+               (direction, priceLevel, stopPoints, conditionText, imagePath,
+                imageHash, imageFileId, rawText, sourceMessageId, createdAt, updatedAt)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                direction, price_level, stop_points, condition_text,
+                image_path, image_hash, image_file_id, raw_text,
+                source_message_id, now, now,
+            ),
+        )
+        conn.commit()
+    return get_entry(cursor.lastrowid)
+
+
+def get_entry(entry_id: int) -> Optional[dict]:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM entries WHERE id = ?", (entry_id,)
+        ).fetchone()
+    return _row_to_dict(row) if row else None
+
+
+def get_entries(status: str = "") -> list[dict]:
+    if status:
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM entries WHERE status = ? ORDER BY id DESC",
+                (status,),
+            ).fetchall()
+    else:
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM entries ORDER BY id DESC"
+            ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def update_entry(entry_id: int, **fields) -> Optional[dict]:
+    allowed = {
+        "direction", "priceLevel", "stopPoints", "conditionText",
+        "status", "imagePath", "imageHash", "imageFileId", "rawText",
+    }
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return get_entry(entry_id)
+    sets = ", ".join(f"{col} = ?" for col in updates)
+    values = list(updates.values())
+    with get_connection() as conn:
+        conn.execute(
+            f"UPDATE entries SET {sets}, updatedAt = ? WHERE id = ?",
+            (*values, now_iso(), entry_id),
+        )
+        conn.commit()
+    return get_entry(entry_id)
+
+
+def delete_entry(entry_id: int) -> bool:
+    with get_connection() as conn:
+        conn.execute("DELETE FROM entry_updates WHERE entryId = ?", (entry_id,))
+        cursor = conn.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
+        conn.commit()
+    return cursor.rowcount > 0
+
+
+def add_entry_update(
+    entry_id: int,
+    kind: str = "note",
+    value: str = "",
+    price: str = "",
+    image_path: Optional[str] = None,
+    image_hash: str = "",
+    raw_text: str = "",
+    source_message_id: Optional[int] = None,
+) -> dict:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """INSERT INTO entry_updates
+               (entryId, kind, value, price, imagePath, imageHash, rawText,
+                sourceMessageId, createdAt)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                entry_id, kind, value, price, image_path, image_hash,
+                raw_text, source_message_id, now_iso(),
+            ),
+        )
+        conn.commit()
+    return get_entry_update(cursor.lastrowid)
+
+
+def get_entry_update(update_id: int) -> Optional[dict]:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM entry_updates WHERE id = ?", (update_id,)
+        ).fetchone()
+    return _row_to_dict(row) if row else None
+
+
+def get_entry_updates(entry_id: int) -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM entry_updates WHERE entryId = ? ORDER BY id ASC",
+            (entry_id,),
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def find_entry_by_image(image_hash: str, window_minutes: int = 60 * 24) -> Optional[dict]:
+    """يبحث عن دخول نشط بنفس صورة الدخول (نفس المخطط/السهم)."""
+    cutoff = (utcnow() - timedelta(minutes=window_minutes)).isoformat()
+    if not image_hash:
+        return None
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM entries WHERE imageHash = ? AND createdAt > ? "
+            "AND status IN ('ACTIVE', 'INSURED') ORDER BY id DESC LIMIT 1",
+            (image_hash, cutoff),
+        ).fetchone()
+    return _row_to_dict(row) if row else None
+
+
+def latest_entry(window_minutes: int = 60 * 6) -> Optional[dict]:
+    cutoff = (utcnow() - timedelta(minutes=window_minutes)).isoformat()
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM entries WHERE createdAt > ? "
+            "AND status IN ('ACTIVE', 'INSURED') ORDER BY id DESC LIMIT 1",
+            (cutoff,),
+        ).fetchone()
+    return _row_to_dict(row) if row else None
+
+
+def count_entries() -> dict[str, int]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT status, COUNT(*) AS c FROM entries GROUP BY status"
+        ).fetchall()
+    counts = {"ACTIVE": 0, "INSURED": 0, "STOPPED": 0, "CLOSED": 0}
+    for row in rows:
+        counts[row["status"]] = row["c"]
+    return counts

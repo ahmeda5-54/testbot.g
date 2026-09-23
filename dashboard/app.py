@@ -997,6 +997,137 @@ def access_logs_clear():
     return redirect(url_for("access_logs_page"))
 
 
+ENTRY_STATUS_LABELS = {
+    "ACTIVE": "نشط",
+    "INSURED": "مؤمَّن",
+    "STOPPED": "توقف (ستوب)",
+    "CLOSED": "مغلق",
+}
+
+
+@app.route("/entries")
+@login_required
+def entries_page():
+    status = request.args.get("status", "").strip().upper()
+    if status not in ENTRY_STATUS_LABELS:
+        status = ""
+    entries = db.get_entries(status)
+    arena = {
+        "entries": entries,
+        "status": status,
+        "status_labels": ENTRY_STATUS_LABELS,
+        "counts": db.count_entries(),
+        "updates_counts": {
+            e["id"]: len(db.get_entry_updates(e["id"])) for e in entries
+        },
+    }
+    return render_template("entries.html", **arena)
+
+
+@app.route("/entries/<int:entry_id>")
+@login_required
+def entry_detail(entry_id: int):
+    entry = db.get_entry(entry_id)
+    if entry is None:
+        abort(404)
+    return render_template(
+        "entry_detail.html",
+        entry=entry,
+        updates=db.get_entry_updates(entry_id),
+        status_labels=ENTRY_STATUS_LABELS,
+    )
+
+
+@app.post("/entries/manual")
+@login_required
+def entries_manual():
+    from bot import entries as entries_mod
+
+    text = request.form.get("text", "").strip()
+    if not text:
+        flash("اكتب نص الدخول أولاً.", "error")
+        return redirect(url_for("entries_page"))
+    kind = entries_mod.classify(text)
+    image_path = request.form.get("image_path", "").strip()
+    if kind == "ignore":
+        kind = "entry"
+    snap = entries_mod.build_entry_snapshot(text)
+    entry = db.add_entry(
+        direction=snap["direction"],
+        price_level=snap["price_level"],
+        stop_points=snap["stop_points"],
+        condition_text=text[:1200] or None,
+        image_path=image_path or None,
+        raw_text=text,
+    )
+    db.add_entry_update(
+        entry["id"], kind="entry", value=snap["price_level"],
+        price=snap["price_level"], raw_text=text,
+    )
+    db.add_access_log("entry_add", f"إضافة دخول يدوي: {entry['id']}", _client_ip())
+    flash("تم تسجيل الدخول.", "success")
+    return redirect(url_for("entry_detail", entry_id=entry["id"]))
+
+
+@app.post("/entries/<int:entry_id>/follow")
+@login_required
+def entries_follow(entry_id: int):
+    entry = db.get_entry(entry_id)
+    if entry is None:
+        abort(404)
+    kind = request.form.get("kind", "note")
+    if kind not in ("stop", "target", "note"):
+        kind = "note"
+    value = request.form.get("value", "").strip()
+    price = request.form.get("price", "").strip()
+    raw = request.form.get("raw_text", "").strip()
+    db.add_entry_update(
+        entry["id"], kind=kind, value=value, price=price,
+        raw_text=raw or None,
+    )
+    if kind == "stop":
+        db.update_entry(entry["id"], status="STOPPED")
+    elif kind == "target" and entry["status"] == "ACTIVE":
+        db.update_entry(entry["id"], status="INSURED")
+    db.add_access_log("entry_update", f"تحديث دخول {entry_id}: {kind}", _client_ip())
+    flash("تم تسجيل المتابعة.", "success")
+    return redirect(url_for("entry_detail", entry_id=entry_id))
+
+
+@app.post("/entries/<int:entry_id>/edit")
+@login_required
+def entries_edit(entry_id: int):
+    entry = db.get_entry(entry_id)
+    if entry is None:
+        abort(404)
+    direction = request.form.get("direction", "").strip().upper()
+    direction = direction if direction in ("BUY", "SELL") else entry["direction"]
+    status = request.form.get("status", "").strip().upper()
+    status = status if status in ENTRY_STATUS_LABELS else entry["status"]
+    try:
+        stop_points = max(0, int(request.form.get("stop_points", "0") or "0"))
+    except ValueError:
+        stop_points = entry["stopPoints"]
+    db.update_entry(
+        entry["id"],
+        direction=direction,
+        priceLevel=request.form.get("price_level", "").strip(),
+        stopPoints=stop_points,
+        conditionText=request.form.get("condition_text", "").strip() or None,
+        status=status,
+    )
+    flash("تم حفظ تعديلات الدخول.", "success")
+    return redirect(url_for("entry_detail", entry_id=entry_id))
+
+
+@app.post("/entries/<int:entry_id>/delete")
+@login_required
+def entries_delete(entry_id: int):
+    db.delete_entry(entry_id)
+    flash("تم حذف الدخول.", "success")
+    return redirect(url_for("entries_page"))
+
+
 @app.post("/check-members")
 @login_required
 def check_members_all():
