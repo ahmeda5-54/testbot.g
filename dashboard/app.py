@@ -116,19 +116,39 @@ def healthz():
     return "ok"
 
 
+def _client_ip() -> str:
+    fwd = request.headers.get("X-Forwarded-For", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.headers.get("X-Real-IP", "") or request.remote_addr or "-"
+
+
+def _user_agent() -> str:
+    return request.headers.get("User-Agent", "")
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        if request.form.get("password", "") == config.DASHBOARD_PASSWORD:
+        password_ok = request.form.get("password", "") == config.DASHBOARD_PASSWORD
+        if password_ok:
             session["admin"] = True
+            db.add_access_log(
+                "login_success", "تسجيل دخول ناجح", _client_ip(), _user_agent()
+            )
             target = request.args.get("next") or url_for("index")
             return redirect(target)
+        db.add_access_log(
+            "login_fail", "محاولة دخول فاشلة", _client_ip(), _user_agent()
+        )
         flash("كلمة المرور غير صحيحة.", "error")
     return render_template("login.html")
 
 
 @app.route("/logout")
 def logout():
+    if session.get("admin"):
+        db.add_access_log("logout", "تسجيل خروج", _client_ip(), _user_agent())
     session.clear()
     return redirect(url_for("login"))
 
@@ -327,6 +347,11 @@ def settings_page():
     if request.method == "POST":
         for key, _label in REQUIRED_FIELD_KEYS:
             db.set_setting(key, "1" if request.form.get(key) else "0")
+        db.set_setting(
+            "channel_message_custom",
+            request.form.get("channel_message_custom", "").strip(),
+        )
+        db.set_setting("entry_terms", request.form.get("entry_terms", "").strip())
         try:
             invite_value = int(request.form.get("invite_link_value", "0") or "0")
         except ValueError:
@@ -643,7 +668,11 @@ def _render_settings(**extra):
     preview = bot_texts.channel_message(
         preview_hours,
         flow.required_field_labels(),
+        custom_text=db.get_setting("channel_message_custom", ""),
+        entry_terms=db.get_setting("entry_terms", ""),
     )
+    entry_terms = db.get_setting("entry_terms", "")
+    custom_text = db.get_setting("channel_message_custom", "")
     session_exists = _session_authorized()
     invite_value = db.get_setting("invite_link_value", "0")
     try:
@@ -661,6 +690,8 @@ def _render_settings(**extra):
         "session_exists": session_exists,
         "invite_value": invite_value,
         "invite_unit": invite_unit,
+        "entry_terms": entry_terms,
+        "custom_text": custom_text,
         "base_dir": str(config.BASE_DIR),
         "support_mode": getattr(config, "SUPPORT_MODE", "inline"),
     }
@@ -861,10 +892,12 @@ def notifications():
     counts = db.count_members()
     for key in STATUS_LABELS:
         counts.setdefault(key, 0)
+    members = db.get_members(None)
     return render_template(
         "notifications.html",
         total=counts["ALL"],
         counts=counts,
+        members=members,
         broadcasts=db.get_last_broadcasts(10),
     )
 
@@ -887,6 +920,31 @@ def broadcast():
     if not text and not photo_path:
         flash("اكتب نص الإشعار أو ارفع صورة أولاً.", "error")
         return redirect(url_for("notifications"))
+
+    # بث مباشر داخل القناة/المجموعة نفسها (منشور عام)
+    if scope == "group":
+        bridge.broadcast_group(text, str(photo_path) if photo_path else None)
+        kind = "منشور عام مع صورة" if photo_path else "منشور عام"
+        flash(f"تم بدء نشر الـ{kind} داخل القناة في الخلفية.", "success")
+        return redirect(url_for("notifications"))
+
+    # إرسال لعضو محدد واحد
+    if scope == "single":
+        raw_id = request.form.get("target_user_id", "").strip()
+        selected = db.get_member(int(raw_id)) if raw_id.lstrip("-").isdigit() else None
+        if selected is None:
+            flash("اختر عضواً محدداً أولاً.", "error")
+            return redirect(url_for("notifications"))
+        bridge.broadcast(
+            text,
+            [selected["telegramUserId"]],
+            str(photo_path) if photo_path else None,
+            "single",
+        )
+        kind = "إشعار مع صورة" if photo_path else "إشعار"
+        flash(f"تم بدء إرسال الـ{kind} إلى «{selected['telegramName'] or selected['telegramUserId']}».", "success")
+        return redirect(url_for("notifications"))
+
     if scope == "pending":
         members = db.get_members(db.NOT_STARTED) + db.get_members(db.PENDING)
     elif scope == "unverified":
@@ -910,6 +968,33 @@ def broadcast():
     kind = "إشعار مع صورة" if photo_path else "إشعار"
     flash(f"تم بدء إرسال الـ{kind} إلى {len(ids)} مشترك في الخلفية.", "success")
     return redirect(url_for("notifications"))
+
+
+@app.route("/access")
+@login_required
+def access_logs_page():
+    action = request.args.get("action", "").strip()
+    try:
+        limit = max(20, min(500, int(request.args.get("limit", "100"))))
+    except ValueError:
+        limit = 100
+    logs = db.get_access_logs(limit, action or None)
+    counts = db.count_access_logs()
+    return render_template(
+        "access.html",
+        logs=logs,
+        counts=counts,
+        action=action,
+        limit=limit,
+    )
+
+
+@app.post("/access/clear")
+@login_required
+def access_logs_clear():
+    deleted = db.clear_access_logs()
+    flash(f"تم مسح {deleted} سجل دخول.", "success")
+    return redirect(url_for("access_logs_page"))
 
 
 @app.post("/check-members")

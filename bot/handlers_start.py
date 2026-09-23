@@ -53,4 +53,5 @@ async def cmd_start(
             [support_button()],
         ]
     )
-    await flow.safe_answer(message, texts.START_WELCOME, reply_markup=keyboard)
+    welcome = texts.start_welcome(db.get_setting("entry_terms", ""))
+    await flow.safe_answer(message, welcome, reply_markup=keyboard)

@@ -62,7 +62,10 @@ async def send_verify_message(bot) -> tuple[bool, int | None, str, str]:
     msg = await bot.send_message(
         chat_id=config.CHANNEL_ID,
         text=texts.channel_message(
-            config.DEADLINE_HOURS, flow.required_field_labels()
+            config.DEADLINE_HOURS,
+            flow.required_field_labels(),
+            custom_text=db.get_setting("channel_message_custom", ""),
+            entry_terms=db.get_setting("entry_terms", ""),
         ),
         reply_markup=keyboard,
     )

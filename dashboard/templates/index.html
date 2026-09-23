@@ -2,43 +2,56 @@
 {% block title %}لوحة التحكم{% endblock %}
 {% block head %}<meta http-equiv="refresh" content="15">{% endblock %}
 
-{% block page_title %}لوحة التحكم — إدارة المشتركين والتحقق{% endblock %}
+{% block page_title %}لوحة التحكم — مشتركون و تحقق{% endblock %}
 
 {% block topbar_actions %}
-<div class="quick-actions">
-  <form class="quick-btn" method="post" action="{{ url_for('check_members_all') }}">
-    <button class="btn btn-check" type="submit">⚡ فحص حضور الجميع الآن</button>
-    <small class="quick-sub">آخر فحص كامل: {{ fmt(stats.last_full_check) if stats.last_full_check else 'لم يُفحص بعد' }}</small>
-  </form>
-  <form class="quick-btn" method="post" action="{{ url_for('post_message') }}"
-        onsubmit="return confirm('نشر وتثبيت رسالة التحقق في القناة؟');">
-    <button class="btn btn-post" type="submit" style="width:auto;">📢 نشر وتثبيت رسالة التحقق</button>
-    <small class="quick-sub">تُنشر في قناة المجموعة</small>
-  </form>
-</div>
+<a class="btn btn-outline" href="{{ url_for('notifications') }}">📢 إشعار عام</a>
+<a class="btn btn-review" href="{{ url_for('support_page') }}">🛟 الدعم ({{ support_new }})</a>
 {% endblock %}
 
 {% block content %}
-<section class="stats-grid">
-  <div class="stat-card">
-    <h3>إجمالي المشتركين</h3>
-    <p>{{ counts['ALL'] }}</p>
-    <span class="stat-sub">أعضاء المجموعة: {{ stats.group_total if stats.group_total is not none else '—' }}</span>
+<section class="card hero-card">
+  <div class="hero-head">
+    <div class="hero-title">
+      <span class="hero-ic">📊</span>
+      <div>
+        <h3>نظرة عامة على النظام</h3>
+        <p class="settings-hint">آخر فحص كامل: {{ fmt(stats.last_full_check) if stats.last_full_check else 'لم يُفحص بعد' }}</p>
+      </div>
+    </div>
+    <div class="quick-actions">
+      <form class="quick-btn" method="post" action="{{ url_for('check_members_all') }}">
+        <button class="btn btn-sm btn-check" type="submit">⚡ فحص الحضور</button>
+        <small class="quick-sub">لكل الأعضاء</small>
+      </form>
+      <form class="quick-btn" method="post" action="{{ url_for('post_message') }}"
+            onsubmit="return confirm('نشر وتثبيت رسالة التحقق في القناة؟');">
+        <button class="btn btn-sm btn-post" type="submit">📌 نشر وتثبيت</button>
+        <small class="quick-sub">رسالة القناة</small>
+      </form>
+    </div>
   </div>
-  <div class="stat-card warn">
-    <h3>طلبات جديدة / قيد المراجعة</h3>
-    <p>{{ counts['SUBMITTED'] }} / {{ counts['UNDER_REVIEW'] }}</p>
-    <span class="stat-sub">بانتظار قرار المشرف</span>
-  </div>
-  <div class="stat-card success">
-    <h3>مقبولون / مرفوضون</h3>
-    <p>{{ counts['VERIFIED'] }} / {{ counts['REJECTED'] }}</p>
-    <span class="stat-sub">داخل المجموعة الآن: {{ stats.in_group }}</span>
-  </div>
-  <div class="stat-card danger">
-    <h3>انتهت مهلتهم / غير مكتملين</h3>
-    <p>{{ counts['EXPIRED'] }} / {{ stats.incomplete }}</p>
-    <span class="stat-sub">لم يبدأوا (تقريبي): {{ stats.not_started if stats.not_started is not none else '—' }}</span>
+  <div class="hero-grid">
+    <div class="hero-stat">
+      <span class="hero-label">إجمالي المشتركين</span>
+      <span class="hero-num">{{ counts['ALL'] }}</span>
+      <span class="hero-sub">أعضاء المجموعة: {{ stats.group_total if stats.group_total is not none else '—' }}</span>
+    </div>
+    <div class="hero-stat">
+      <span class="hero-label">طلبات جديدة / مراجعة</span>
+      <span class="hero-num">{{ counts['SUBMITTED'] }} <i>/</i> {{ counts['UNDER_REVIEW'] }}</span>
+      <span class="hero-sub">بانتظار قرار المشرف</span>
+    </div>
+    <div class="hero-stat">
+      <span class="hero-label">مقبول / مرفوض</span>
+      <span class="hero-num">{{ counts['VERIFIED'] }} <i>/</i> {{ counts['REJECTED'] }}</span>
+      <span class="hero-sub">داخل المجموعة الآن: {{ stats.in_group }}</span>
+    </div>
+    <div class="hero-stat">
+      <span class="hero-label">منتهية / غير مكتمل</span>
+      <span class="hero-num">{{ counts['EXPIRED'] }} <i>/</i> {{ stats.incomplete }}</span>
+      <span class="hero-sub">لم يبدأوا (تقريبي): {{ stats.not_started if stats.not_started is not none else '—' }}</span>
+    </div>
   </div>
 </section>
 

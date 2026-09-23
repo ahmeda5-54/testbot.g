@@ -34,8 +34,9 @@
       enctype="multipart/form-data"
       onsubmit="return confirm('إرسال هذا الإشعار للنطاق المحدد؟');">
   <p class="settings-hint">
-    أرسل رسالة نصية و/أو صورة لكل المشتركين في النطاق المحدد. يُرسل في الخلفية
-    ببطء (حسب حدود تلغرام) ولن تُغلق الصفحة. بعد الانتهاء يُحفظ سجل الإرسال
+    أرسل رسالة نصية و/أو صورة. اختر «الجميع» ليرسل لكل مشترك بالخاص، أو «نشر عام»
+    لظهور منشور واحد داخل القناة/المجموعة نفسها، أو «عضو محدد» لإرساله لواحد فقط.
+    يُرسل في الخلفية ببطء (حسب حدود تلغرام) ولن تُغلق الصفحة، ويُحفظ سجل الإرسال
     بالأسفل مع عدد الناجحين والفاشلين.
   </p>
 
@@ -47,21 +48,42 @@
   <input type="file" id="photo" name="photo" accept="image/jpeg,image/png,image/webp">
   <p class="settings-hint">إن رفعت صورة، سيصل للمشترك إشعار صورة يحمل نفس النص كتعليق.</p>
 
-  <label for="scope">النطاق (من يستلم الإشعار)</label>
-  <select id="scope" name="scope">
-    <option value="all">الجميع ({{ total }} مشترك)</option>
+  <label for="scope">من يستلم الإشعار؟</label>
+  <select id="scope" name="scope" onchange="toggleSingle()">
+    <option value="all">الجميع ({{ total }} مشترك) — لكل واحد بالخاص</option>
     <option value="pending">الذين لم يكملوا فقط (NOT_STARTED + PENDING)</option>
     <option value="unverified">الجميع ما عدا المقبولون والمُزالون</option>
     <option value="verified">المقبولون فقط ({{ counts['VERIFIED'] }})</option>
     <option value="rejected">المرفوضون + المنتهية مهلة ({{ counts['REJECTED'] + counts['EXPIRED'] }})</option>
+    <option value="single">عضو محدد واحد فقط</option>
+    <option value="group">📢 نشر عام داخل القناة/المجموعة (منشور واحد)</option>
   </select>
+
+  <div id="single-wrap" style="display:none;">
+    <label for="target_user_id">اختر العضو:</label>
+    <select id="target_user_id" name="target_user_id">
+      {% for m in members %}
+      <option value="{{ m.telegramUserId }}">
+        {{ m.telegramName or 'بلا اسم' }}{% if m.telegramUsername %} (@{{ m.telegramUsername }}){% endif %} — {{ m.telegramUserId }} — {{ STATUS_LABELS[m.status] }}
+      </option>
+      {% endfor %}
+    </select>
+  </div>
 
   <button class="btn btn-check" type="submit">📢 إرسال الإشعار الآن</button>
   <p class="settings-hint">
-    ملاحظة: الإرسال يتم عبر البوت مباشرةً لكل عضو. تأكد أن البوت ما زال متصل
-    (الحالة في الشريط الجانبي) قبل الضغط.
+    ملاحظة: الإرسال عبر البوت لكل عضو بالخاص ما عدا «النشر العام» الذي يظهر
+    داخل القناة/المجموعة نفسها. تأكد أن البوت ما زال متصل (الحالة في الشريط
+    الجانبي) قبل الضغط.
   </p>
 </form>
+
+<script>
+function toggleSingle() {
+  const v = document.getElementById('scope').value;
+  document.getElementById('single-wrap').style.display = v === 'single' ? '' : 'none';
+}
+</script>
 
 {% if broadcasts %}
 <h3 class="settings-section-title">📤 سجل آخر الإشعارات</h3>
@@ -82,11 +104,13 @@
       <tr>
         <td style="padding:6px; white-space:nowrap;">{{ fmt(b.createdAt) }}</td>
         <td style="padding:6px; white-space:nowrap;">
-          {% if b.scope == 'all' %}الجميع
+          {% if b.scope == 'all' %}الجميع (بالخاص)
           {% elif b.scope == 'pending' %}لم يكملوا
           {% elif b.scope == 'unverified' %}غير موثقين
           {% elif b.scope == 'verified' %}مقبولون
           {% elif b.scope == 'rejected' %}مرفوضون/منتهون
+          {% elif b.scope == 'single' %}عضو محدد
+          {% elif b.scope == 'group' %}منشور عام في القناة
           {% else %}{{ b.scope }}{% endif %}
           {% if b.photo %}<span class="chip chip-warn">🖼️</span>{% endif %}
         </td>

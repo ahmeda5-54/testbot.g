@@ -15,6 +15,8 @@
   {% set cur_tab = request.args.get('tab', 'all') %}
   {% if request.endpoint == 'notifications' or request.endpoint == 'broadcast' %}
     {% set active_nav = 'notifications' %}
+  {% elif request.endpoint in ('access_logs_page', 'access_logs_clear') %}
+    {% set active_nav = 'access' %}
   {% elif request.endpoint in ('support_page', 'support_reply', 'support_delete') %}
     {% set active_nav = 'support' %}
   {% elif request.endpoint in ('settings_page', 'save_general_settings', 'save_userbot_settings', 'run_userbot_sync', 'list_userbot_groups', 'restart_app') %}
@@ -51,6 +53,9 @@
       </a>
       <a class="nav-link {{ 'active' if active_nav == 'settings' }}" href="{{ url_for('settings_page') }}">
         <span class="nav-ic">⚙️</span> إعدادات البوت والتحقق
+      </a>
+      <a class="nav-link {{ 'active' if active_nav == 'access' }}" href="{{ url_for('access_logs_page') }}">
+        <span class="nav-ic">🛂</span> سجل الدخولات
       </a>
       <a class="nav-link {{ 'active' if active_nav == 'notifications' }}" href="{{ url_for('notifications') }}">
         <span class="nav-ic">📢</span> الإشعارات العامة

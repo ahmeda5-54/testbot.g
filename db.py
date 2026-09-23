@@ -95,6 +95,15 @@ CREATE TABLE IF NOT EXISTS broadcasts (
     failed INTEGER NOT NULL DEFAULT 0,
     createdAt TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS access_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    action TEXT NOT NULL,
+    detail TEXT,
+    ip TEXT,
+    userAgent TEXT,
+    createdAt TEXT NOT NULL
+);
 """
 
 DEFAULT_SETTINGS = {
@@ -692,6 +701,57 @@ def delete_support_message(msg_id: int) -> bool:
         )
         conn.commit()
     return cursor.rowcount > 0
+
+
+# ── سجل الدخولات (الوصول للوحة) ─────────────────────────
+def add_access_log(
+    action: str,
+    detail: str = "",
+    ip: str = "",
+    user_agent: str = "",
+) -> int:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "INSERT INTO access_logs (action, detail, ip, userAgent, createdAt) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (action, detail or "", ip or "", (user_agent or "")[:300], now_iso()),
+        )
+        conn.commit()
+    return cursor.lastrowid
+
+
+def get_access_logs(limit: int = 100, action: str = "") -> list[dict]:
+    limit = max(1, min(500, int(limit)))
+    if action:
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM access_logs WHERE action = ? ORDER BY id DESC LIMIT ?",
+                (action, limit),
+            ).fetchall()
+    else:
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM access_logs ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def count_access_logs() -> dict[str, int]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT action, COUNT(*) AS c FROM access_logs GROUP BY action"
+        ).fetchall()
+    counts: dict[str, int] = {}
+    for row in rows:
+        counts[row["action"]] = row["c"]
+    return counts
+
+
+def clear_access_logs() -> int:
+    with get_connection() as conn:
+        cursor = conn.execute("DELETE FROM access_logs")
+        conn.commit()
+    return cursor.rowcount
 
 
 # ── سجل الإشعارات العامة ────────────────────────────────

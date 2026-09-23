@@ -4,20 +4,49 @@ LABEL_SERVER_FIELD = "اسم السيرفر"
 LABEL_PHOTO_FIELD = "صورة الرصيد أو Equity"
 
 
-def channel_message(hours: int, required_labels: list[str]) -> str:
+def _join_entry_terms(body: str, entry_terms: str = "") -> str:
+    terms = (entry_terms or "").strip()
+    if terms:
+        body = f"{body}\n\n📜 شروط الاشتراك والدخول للقناة:\n{terms}"
+    return body
+
+
+def channel_message(
+    hours: int,
+    required_labels: list[str],
+    custom_text: str = "",
+    entry_terms: str = "",
+) -> str:
     fields_text = "\n".join(f"• {label}" for label in required_labels)
-    return (
-        "تنبيه مهم\n\n"
-        f"يجب تأكيد اشتراكك خلال {hours} ساعة.\n"
-        "اضغط الزر أدناه وأرسل البيانات التالية:\n"
-        f"{fields_text}\n\n"
-        "بعد انتهاء المهلة سيتم حذف المشتركين غير المؤكدين."
-    )
+    custom = (custom_text or "").strip()
+    if custom:
+        try:
+            body = custom.format(hours=hours, fields=fields_text)
+        except (KeyError, IndexError, ValueError):
+            body = custom
+    else:
+        body = (
+            "تنبيه مهم\n\n"
+            f"يجب تأكيد اشتراكك خلال {hours} ساعة.\n"
+            "اضغط الزر أدناه وأرسل البيانات التالية:\n"
+            f"{fields_text}\n\n"
+            "بعد انتهاء المهلة سيتم حذف المشتركين غير المؤكدين."
+        )
+    return _join_entry_terms(body, entry_terms)
 
 
-START_WELCOME = """مرحباً بك.
+def start_welcome(entry_terms: str = "") -> str:
+    terms = (entry_terms or "").strip()
+    if terms:
+        return (
+            "مرحباً بك 🎉\n\n📜 شروط الدخول للقناة:\n"
+            f"{terms}\n\n"
+            "بعد الموافقة على الشروط اضغط الزر أدناه لتأكيد اشتراكك."
+        )
+    return "مرحباً بك ✨\n\nلاكتمال التحقق من اشتراكك اضغط الزر أدناه واتبع الخطوات."
 
-لاكتمال التحقق من اشتراكك اضغط الزر أدناه واتبع الخطوات."""
+
+START_WELCOME = start_welcome()
 
 VERIFY_ALREADY = "تم تأكيد اشتراكك مسبقاً."
 VERIFY_IN_REVIEW = "طلبك قيد المراجعة من الإدارة. لا تكرر الإرسال."

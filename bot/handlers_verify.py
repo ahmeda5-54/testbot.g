@@ -160,7 +160,9 @@ async def on_file_resubmit(message: Message) -> None:
 
     member = db.get_member(user.id)
     if not member or not member.get("tradingAccountNumber"):
-        await flow.safe_answer(message, texts.START_WELCOME)
+        await flow.safe_answer(
+            message, texts.start_welcome(db.get_setting("entry_terms", ""))
+        )
         return
 
     filename = await _download_image(message)
@@ -178,7 +180,9 @@ async def on_file_resubmit(message: Message) -> None:
 async def on_any_text(message: Message, state: FSMContext) -> None:
     member = db.get_member(message.from_user.id)
     if member is None:
-        await flow.safe_answer(message, texts.START_WELCOME)
+        await flow.safe_answer(
+            message, texts.start_welcome(db.get_setting("entry_terms", ""))
+        )
         return
     if member["status"] in (db.SUBMITTED, db.UNDER_REVIEW):
         await flow.safe_answer(message, texts.VERIFY_IN_REVIEW)

@@ -175,6 +175,22 @@ python userbot_sync.py</pre>
   <pre class="channel-preview">{{ preview }}</pre>
   <p class="settings-hint">روسل الرسالة مجدداً من زر «نشر وتثبيت» لتطبيق الحقول المحددة.</p>
 </section>
+
+<h3 class="settings-section-title">نص الرسالة المثبتة وشروط الدخول</h3>
+<form class="card settings-form" method="post" action="{{ url_for('settings_page') }}">
+  <p class="settings-hint">
+    اكتب هنا نص الرسالة التي تُثبَّت في القناة، وأيضاً شروط الاشتراك/الدخول للقناة.
+    تظهر الشروط في رسالة الترحيب أول مرة، وفي آخر رسالة القناة المثبتة.
+    إن تُرك «نص الرسالة» فارغاً ستعود الرسالة للنص الافتراضي.
+  </p>
+  <label for="channel_message_custom">نص الرسالة المثبتة (اختياري — يوضع مكان الافتراضي)</label>
+  <textarea id="channel_message_custom" name="channel_message_custom" rows="5"
+            placeholder="اكتب نص الرسالة المثبتة هنا...&#10;يمكنك استخدام {hours} لعدد الساعات و{fields} لقائمة البيانات المطلوبة.">{{ custom_text }}</textarea>
+  <label for="entry_terms">شروط الاشتراك / دخول القناة (اختياري)</label>
+  <textarea id="entry_terms" name="entry_terms" rows="4"
+            placeholder="مثال:&#10;- الالتزام بقوانين القناة.&#10;- إرسال بيانات حقيقية للتحقق.">{{ entry_terms }}</textarea>
+  <button class="btn btn-check" type="submit">حفظ النص والشروط</button>
+</form>
 {% endblock %}
 
 {% block scripts %}

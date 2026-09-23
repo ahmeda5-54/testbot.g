@@ -233,6 +233,26 @@ async def _broadcast_task(
     _debug(f"[broadcast] scope={scope} targets={len(member_ids)} sent={sent} failed={failed}")
 
 
+async def _group_post_task(text: str, photo_path: Optional[str]) -> None:
+    try:
+        photo = Path(photo_path) if photo_path else None
+        if photo is not None and photo.exists():
+            await _bot.send_photo(
+                config.CHANNEL_ID, FSInputFile(str(photo)), caption=text
+            )
+        else:
+            await _bot.send_message(config.CHANNEL_ID, text)
+    except Exception as exc:
+        _debug(f"[group-post] failed: {exc}")
+
+
+def broadcast_group(text: str, photo_path: Optional[str] = None) -> None:
+    """بث مباشر داخل القناة/المجموعة نفسها (نشر عام) بدلاً من أن يصل لكل عضو بالخاص."""
+    if _bot is None or _loop is None:
+        return
+    asyncio.run_coroutine_threadsafe(_group_post_task(text, photo_path), _loop)
+
+
 def broadcast(
     text: str, member_ids: list[int], photo_path: Optional[str] = None, scope: str = "all"
 ) -> None:
