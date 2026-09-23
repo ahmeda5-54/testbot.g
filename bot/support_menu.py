@@ -6,6 +6,19 @@ from bot import texts
 SUPPORT_CB = "support"
 
 
+def support_button() -> InlineKeyboardButton:
+    # التحويل إلى بوت الدعم المحدد يكون مباشرةً (رابط) في وضع «مخصص»،
+    # وفي الوضع المدمج يفتح صفحة الدعم داخل البوت الرئيسي.
+    if config.SUPPORT_DEDICATED and config.SUPPORT_BOT_USERNAME:
+        return InlineKeyboardButton(
+            text=texts.BTN_SUPPORT,
+            url=f"https://t.me/{config.SUPPORT_BOT_USERNAME}",
+        )
+    return InlineKeyboardButton(
+        text=texts.BTN_SUPPORT, callback_data=f"{SUPPORT_CB}:start"
+    )
+
+
 def support_keyboard() -> InlineKeyboardMarkup:
     rows = [
         [

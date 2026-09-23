@@ -246,9 +246,9 @@ def _apply_to_config(updates: dict) -> None:
     raw_support_mode = updates.get("SUPPORT_MODE")
     if raw_support_mode is not None:
         mode = raw_support_mode.strip().lower()
-        if mode in ("auto", "inline", "dedicated"):
+        if mode in ("inline", "dedicated"):
             config.SUPPORT_MODE = mode
-    config.SUPPORT_DEDICATED = bool(config.SUPPORT_BOT_TOKEN) if config.SUPPORT_MODE != "inline" else False
+    config.SUPPORT_DEDICATED = config.SUPPORT_MODE == "dedicated"
 
 
 @app.post("/settings/general")
@@ -262,9 +262,9 @@ def save_general_settings():
     proxy_raw = request.form.get("proxy_url", "").strip()
     support_token = request.form.get("support_bot_token", "").strip()
     support_username = request.form.get("support_bot_username", "").strip().lstrip("@")
-    support_mode = request.form.get("support_mode", "auto").strip().lower()
-    if support_mode not in ("auto", "inline", "dedicated"):
-        support_mode = "auto"
+    support_mode = request.form.get("support_mode", "inline").strip().lower()
+    if support_mode not in ("inline", "dedicated"):
+        support_mode = "inline"
 
     try:
         channel_id = int(channel_raw)
@@ -662,7 +662,7 @@ def _render_settings(**extra):
         "invite_value": invite_value,
         "invite_unit": invite_unit,
         "base_dir": str(config.BASE_DIR),
-        "support_mode": getattr(config, "SUPPORT_MODE", "auto"),
+        "support_mode": getattr(config, "SUPPORT_MODE", "inline"),
     }
     ctx.update(extra)
     return render_template("settings.html", **ctx)

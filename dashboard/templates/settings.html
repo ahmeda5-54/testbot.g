@@ -28,10 +28,6 @@
   <label>طريقة تشغيل بوت الدعم (فصل واضح بين البوتين)</label>
   <div class="support-mode-row" style="display:flex; flex-direction:column; gap:10px; margin-bottom:14px;">
     <label class="check-row">
-      <input type="radio" name="support_mode" value="auto" {% if support_mode == 'auto' %}checked{% endif %}>
-      <span><strong>تلقائي</strong> — البوت المخصص يعمل للدعم تلقائياً إذا وُجد توكنه، وإن لم يوجد فالدعم داخل البوت الرئيسي.</span>
-    </label>
-    <label class="check-row">
       <input type="radio" name="support_mode" value="inline" {% if support_mode == 'inline' %}checked{% endif %}>
       <span><strong>البوت الرئيسي فقط</strong> — كل المهام بما فيها الدعم داخل البوت الرئيسي، ولا يُشغَّل بوت الدعم مهما وُجد توكنه.</span>
     </label>
@@ -40,7 +36,7 @@
       <span><strong>بوت دعم مخصص فقط</strong> — البوت الرئيسي لبقية المهام فقط، ومحادثات الدعم تمر عبر بوت الدعم حصرياً (يتطلب التوكن بالأسفل).</span>
     </label>
   </div>
-  <label>توكن بوت الدعم (من @BotFather — يُشغَّل في وضع «مخصص» أو «تلقائي»)</label>
+  <label>توكن بوت الدعم (من @BotFather — يُشغَّل في وضع «مخصص»)</label>
   <input type="password" dir="ltr" name="support_bot_token" value="{{ env.get('SUPPORT_BOT_TOKEN', '') }}" placeholder="توكن بوت الدعم من @BotFather">
   <label>يوزرنيم بوت الدعم (بدون @)</label>
   <input type="text" dir="ltr" name="support_bot_username" value="{{ env.get('SUPPORT_BOT_USERNAME', '') }}" placeholder="support_bot123">

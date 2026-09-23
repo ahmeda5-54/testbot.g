@@ -41,6 +41,8 @@ async def _unpin_all(bot) -> str:
 
 
 async def send_verify_message(bot) -> tuple[bool, int | None, str, str]:
+    from bot.support_menu import support_button
+
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -48,11 +50,7 @@ async def send_verify_message(bot) -> tuple[bool, int | None, str, str]:
                     text=texts.BTN_START, url=config.VERIFY_URL
                 )
             ],
-            [
-                InlineKeyboardButton(
-                    text=texts.BTN_SUPPORT, callback_data="support:start"
-                )
-            ],
+            [support_button()],
         ]
     )
 

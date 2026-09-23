@@ -28,16 +28,15 @@ async def on_support_start(callback: CallbackQuery) -> None:
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="فتح بوت الدعم 💬",
+                        text=texts.BTN_SUPPORT,
                         url=f"https://t.me/{config.SUPPORT_BOT_USERNAME}",
                     )
                 ]
             ]
         )
+        # تحويل مباشر: استبدال زر الكولباك برابط بوت الدعم — لا رسالة وسيطة.
         try:
-            await callback.message.answer(
-                texts.SUPPORT_MOVE_TO_BOT, reply_markup=markup
-            )
+            await callback.message.edit_reply_markup(reply_markup=markup)
         except Exception:
             pass
         return

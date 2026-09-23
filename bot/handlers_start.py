@@ -41,6 +41,8 @@ async def cmd_start(
         await flow.begin(message, state)
         return
 
+    from bot.support_menu import support_button
+
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -48,11 +50,7 @@ async def cmd_start(
                     text=texts.BTN_START, url=config.VERIFY_URL
                 )
             ],
-            [
-                InlineKeyboardButton(
-                    text=texts.BTN_SUPPORT, callback_data="support:start"
-                )
-            ],
+            [support_button()],
         ]
     )
     await flow.safe_answer(message, texts.START_WELCOME, reply_markup=keyboard)
