@@ -86,6 +86,14 @@ def notify_member_with_support(user_id: int, text: str) -> None:
     )
 
 
+def notify_member_main(user_id: int, text: str) -> None:
+    """إرسال عبر البوت الرئيسي حصراً (الاشتراك/القبول/رابط الدخول) —
+    لا عبر بوت الدعم، لأن هذه الرسائل ليست من محادثات الدعم."""
+    if _bot is None:
+        return
+    _send_with_target(_bot, lambda: _bot.send_message(user_id, text))
+
+
 def notify_admins(
     text: str, admin_ids: list[int], photo_path: Optional[str] = None
 ) -> None:

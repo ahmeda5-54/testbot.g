@@ -732,7 +732,7 @@ def approve(user_id: int):
     if link:
         from bot import texts as bot_texts
 
-        bridge.notify_member_with_support(
+        bridge.notify_member_main(
             user_id, bot_texts.accepted_message(link, invite_seconds)
         )
         flash(
@@ -740,7 +740,7 @@ def approve(user_id: int):
             "success",
         )
     else:
-        bridge.notify_member_with_support(user_id, "تم قبول اشتراكك بنجاح ✅")
+        bridge.notify_member_main(user_id, "تم قبول اشتراكك بنجاح ✅")
         flash(
             "تم قبول المشترك — لكن تعذر توليد رابط المجموعة "
             "(تأكد أن البوت أدمن وبصلاحية إنشاء روابط دعوة).",
