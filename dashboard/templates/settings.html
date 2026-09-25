@@ -61,8 +61,7 @@
     {% elif license_state.valid %}
       {% if license_state.trial %}
         <p class="settings-hint" style="color:#f59e0b">
-          نسخة تجريبية — متبقٍ {{ '%.1f'|format(license_state.remaining_days if license_state.remaining_days is not none else 0) }} يوم،
-          سقف الأعضاء {{ license_state.max_members }}{% if license_state.customer %}، العميل: {{ license_state.customer }}{% endif %}.
+          نسخة تجريبية — متبقٍ {{ '%.1f'|format((license_state.remaining_days or 0) * 24) }} ساعة، جميع الصلاحيات بلا حد للأعضاء.
         </p>
       {% else %}
         <p class="settings-hint" style="color:#10b981">

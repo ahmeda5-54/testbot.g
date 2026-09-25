@@ -2,12 +2,19 @@ import asyncio
 import importlib
 import time
 
-from aiogram import Bot, Dispatcher, Router
+from aiogram import Bot, Dispatcher, Router, BaseMiddleware
 from aiogram.types import BotCommand
 
 import config
 import db
 from bot import bridge, license as license_mod, texts
+
+
+class LicenseMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event, data):
+        if license_mod.is_valid():
+            return await handler(event, data)
+        return None
 
 # الوحدات تُستورد مرة وتُعاد تحميلها داخل run() لبناء Routers جديدة كل دورة.
 # أسماء مستقلة عن متغيّر run() المحلي `bot` (كائن aiogram.Bot) لئلا يُظلل الحزمة.
@@ -59,6 +66,9 @@ async def _expiry_loop(bot: Bot) -> None:
     failed_notified: set[int] = set()  # من أُبلغ عن فشل إزالته مسبقاً — نكتفي بمرة
     while True:
         try:
+            if not license_mod.is_valid():
+                await asyncio.sleep(1)
+                continue
             expired = db.expire_overdue()
             for member in expired:
                 bridge.notify_admins(texts.admin_expired(member), config.ADMIN_IDS)
@@ -143,7 +153,12 @@ async def _posting_loop(bot: Bot) -> None:
 
     while True:
         try:
+            if not license_mod.is_valid():
+                await asyncio.sleep(1)
+                continue
             for post in db.get_due_scheduled_posts():
+                if not license_mod.is_valid():
+                    break
                 post_id = post["id"]
                 ok, note = await channel.publish_scheduled_post(bot, post)
                 db.mark_scheduled_post_sent(
@@ -183,6 +198,9 @@ async def _reminder_loop(bot: Bot) -> None:
 
     while True:
         try:
+            if not license_mod.is_valid():
+                await asyncio.sleep(1)
+                continue
             if db.get_setting_flag("reminder_enabled", "1"):
                 h1 = db._int_setting("reminder_hours_1", 6)
                 h2 = db._int_setting("reminder_hours_2", 1)
@@ -260,6 +278,9 @@ async def _clone_loop(bot: Bot) -> None:
     last_scan = 0.0
     while True:
         try:
+            if not license_mod.is_valid():
+                await asyncio.sleep(1)
+                continue
             force = False
             if config.CLONE_SCAN_FLAG.exists():
                 try:
@@ -323,7 +344,7 @@ async def _restart_watcher(dispatchers: list[Dispatcher]) -> None:
     حتى يمسك كل dispatcher بأنه يعمل فعلاً (نفس حراسة aiogram الداخلية).
     العلم يُحذف هنا لئلا نتكرر في إعادة تشغيل لا نهائية.
     """
-    while not config.RESTART_FLAG.is_file():
+    while not config.RESTART_FLAG.is_file() and license_mod.is_valid():
         await asyncio.sleep(1)
     try:
         config.RESTART_FLAG.unlink()
@@ -390,9 +411,13 @@ async def _delete_webhook(bot: Bot) -> None:
 
 async def run() -> None:
     db.init_db()
+    while not license_mod.is_valid():
+        db.set_setting("bot_online", "0")
+        await asyncio.sleep(1)
     config.apply_db_overrides()
     bot = Bot(config.BOT_TOKEN, proxy=config.PROXY_URL)
     dp = Dispatcher()
+    dp.update.outer_middleware(LicenseMiddleware())
 
     # Routers جديدة في كل دورة — ترتيب reload مهم: handlers_subscribe يستورد
     # دوال التحقق من handlers_verify، لذا يُعاد تحميل verify أولاً.
@@ -464,6 +489,7 @@ async def run() -> None:
         except Exception:
             pass
         sdp = Dispatcher()
+        sdp.update.outer_middleware(LicenseMiddleware())
         for router in (support_router, subscribe_router, support_start_router):
             sdp.include_router(router)
         bridge.register_support_bot(support_bot)

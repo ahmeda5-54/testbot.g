@@ -112,8 +112,7 @@
       </div>
       {% if license_state and not license_state.owner and license_state.valid and license_state.trial %}
       <div class="trial-banner glass">
-        <span>🧪 <b>نسخة تجريبية</b> — متبقٍ <b>{{ '%.1f'|format(license_state.remaining_days if license_state.remaining_days is not none else 0) }}</b> يوم،
-        سقف الأعضاء <b>{{ license_state.max_members }}</b>.</span>
+        <span>🧪 <b>نسخة تجريبية</b> — متبقٍ <b>{{ '%.1f'|format((license_state.remaining_days or 0) * 24) }}</b> ساعة، جميع الصلاحيات بلا حد للأعضاء.</span>
         <a href="{{ url_for('activate') }}">التفعيل</a>
       </div>
       {% elif license_state and license_state.valid and not license_state.owner and not license_state.trial %}

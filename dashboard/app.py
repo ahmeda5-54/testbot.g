@@ -310,8 +310,8 @@ def _license_status_text(st: dict) -> str:
     if st["trial"]:
         days = st["remaining_days"]
         cap = st["max_members"]
-        day_text = f"{days:.1f} يوم" if days is not None else "بلا مهلة"
-        return f"نشطة (تجريبية) — متبقٍ {day_text}، سقف الأعضاء {cap}."
+        day_text = f"{days * 24:.1f} ساعة" if days is not None else "—"
+        return f"نشطة (تجريبية) — متبقٍ {day_text}، جميع الصلاحيات بلا حد للأعضاء."
     cap = st["max_members"]
     cap_text = f"، سقف الأعضاء {cap}" if cap else ""
     who = f" — {st['customer']}" if st["customer"] else ""
@@ -332,7 +332,7 @@ def activate():
         elif not code:
             flash("أدخل كود التفعيل الذي سلّمه لك البائع.", "error")
         else:
-            info = license_mod.validate(code, config.LICENSE_SECRET)
+            info = license_mod.validate(code)
             if info is None:
                 flash("الكود غير صالح أو منتهي الصلاحية.", "error")
             elif info["kind"] != kind:

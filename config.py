@@ -145,15 +145,18 @@ def is_configured() -> bool:
 
 
 # ── الترخيص (تجريبي / دائمي) ─────────────────────────────
-# سر التوقيع الذي به تولّد أكواد التفعيل — سر البائع فقط، لا يُوزع
-# ولا يُحفظ في قاعدة البيانات (يوضع في متغير بيئة Railway الخاصة بك).
-LICENSE_SECRET = os.getenv("LICENSE_SECRET", "").strip()
+
+
+def activation_codes() -> tuple[str, str]:
+    # Restart after changing .env; hosted environment takes priority.
+    return tuple(os.getenv(key, "").strip() for key in (
+        "TRIAL_ACTIVATION_CODE", "PERMANENT_ACTIVATION_CODE"
+    ))
 
 
 def license_enforced() -> bool:
-    """هل الترخيص مفروض؟ (عند وجود سر توقيع عند البائع فقط).
-    بلا سر → وضع المالك: النظام يعمل دائماً دون شاشة تفعيل."""
-    return bool(LICENSE_SECRET)
+    """يتطلب النظام تفعيل إحدى النسختين دائماً."""
+    return True  # Missing codes must never unlock an unlicensed installation.
 
 
 def verify_url() -> str:
