@@ -47,7 +47,7 @@ async def cmd_start(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=texts.BTN_START, url=config.VERIFY_URL
+                    text=texts.BTN_START, url=config.verify_url()
                 )
             ],
             [support_button()],

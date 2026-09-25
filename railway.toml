@@ -1,0 +1,20 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "python run.py"
+healthcheckPath = "/healthz"
+healthcheckTimeout = 100
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+[[deploy.environmentVariables]]
+name = "LICENSE_SECRET"
+description = "سر توقيع أكواد التفعيل - يجب أن يكون نفسه في كل النسخ"
+required = true
+
+[[deploy.environmentVariables]]
+name = "PORT"
+description = "منفذ الويب (Railway يحدده تلقائياً)"
+default = "5000"

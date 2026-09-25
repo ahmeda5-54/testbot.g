@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}بانتظارك{% endblock %}
+{% block head %}<meta http-equiv="refresh" content="20">{% endblock %}
+
+{% block page_title %}بانتظارك — كل ما يحتاج قراراً{% endblock %}
+
+{% block topbar_actions %}
+<a class="btn btn-outline" href="{{ url_for('index') }}">↩ لوحة التحكم</a>
+<a class="btn btn-outline" href="{{ url_for('support_page', status='new') }}">🛟 الدعم ({{ support_new }})</a>
+{% endblock %}
+
+{% block content %}
+<section class="hero glass">
+  <div class="hero-h">
+    <div>
+      <h2>قائمة الانتظار الموحّدة</h2>
+      <small>طلبات التحقق + رسائل الدعم الجديدة + المنتهية مهلة — تُرتَّب العاجل أولاً ثم الأحدث.</small>
+    </div>
+  </div>
+  <div class="stats" id="hero-stats">
+    <div class="stat" style="--c:#f59e0b">
+      <div class="ic"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h5"/></svg></div>
+      <h3>طلبات جديدة</h3>
+      <div class="num">{{ total_counts.submitted }}</div>
+      <small>بانتظار المراجعة</small>
+    </div>
+    <div class="stat" style="--c:#8b5cf6">
+      <div class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+      <h3>قيد المراجعة</h3>
+      <div class="num">{{ total_counts.under_review }}</div>
+      <small>حدّد قرارك</small>
+    </div>
+    <div class="stat" style="--c:#1f2937">
+      <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg></div>
+      <h3>انتهت المهلة</h3>
+      <div class="num">{{ total_counts.expired }}</div>
+      <small>إزالة أو تمديد</small>
+    </div>
+    <div class="stat" style="--c:#2aabee">
+      <div class="ic"><svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg></div>
+      <h3>رسائل دعم</h3>
+      <div class="num">{{ total_counts.support }}</div>
+      <small>بلا رد بعد</small>
+    </div>
+  </div>
+</section>
+
+<div class="chips">
+  <a class="chip {{ 'on' if not urgent_only }}" href="{{ url_for('pending_queue') }}">عرض الكل <em>{{ total_counts.all }}</em></a>
+  <a class="chip {{ 'on' if urgent_only }}" href="{{ url_for('pending_queue', urgent=1) }}">🚨 عاجل فقط</a>
+  <span class="chip chip-neutral">الترتيب: عاجل أولاً ثم الأحدث</span>
+</div>
+
+{% if items %}
+<div class="table-wrap" style="overflow:visible;">
+<div id="batch-bar" class="batch-bar">
+  <span class="batch-count">محدد: <b id="batch-count-num">0</b></span>
+  <form class="inline" method="post" action="{{ url_for('batch_approve') }}">
+    <input type="hidden" name="ids" class="b-ids">
+    <input type="hidden" name="next" value="{{ request.full_path }}">
+    <button class="btn btn-sm btn-success" type="submit">✔ قبول المحدد</button>
+  </form>
+  <form class="inline" method="post" action="{{ url_for('batch_reject') }}">
+    <input type="hidden" name="ids" class="b-ids">
+    <input type="hidden" name="reason" class="b-reason">
+    <input type="hidden" name="next" value="{{ request.full_path }}">
+    <button class="btn btn-sm btn-danger" type="submit">✖ رفض المحدد</button>
+  </form>
+  <form class="inline" method="post" action="{{ url_for('batch_remove') }}" data-confirm="إزالة المحددين من القناة بواسطة البوت؟">
+    <input type="hidden" name="ids" class="b-ids">
+    <input type="hidden" name="next" value="{{ request.full_path }}">
+    <button class="btn btn-sm btn-outline" type="submit">⛔ إزالة من القناة</button>
+  </form>
+  <form class="inline" method="post" action="{{ url_for('batch_delete') }}" data-confirm="⚠️ حذف سجلات المحددين نهائياً؟ يبقى العضو في المجموعة ويمكنه البدء من جديد.">
+    <input type="hidden" name="ids" class="b-ids">
+    <input type="hidden" name="next" value="{{ request.full_path }}">
+    <button class="btn btn-sm btn-danger" type="submit">🗑 حذف السجلات</button>
+  </form>
+</div>
+
+<div class="pending-list">
+  {% for item in items %}
+  <section class="card pending-card {{ 'urgent' if item.urgent }}">
+    <div class="pending-head">
+      {% if item.kind == 'member' %}
+      <input type="checkbox" class="row-check" value="{{ item.uid }}" title="تحديد لهذه البطاقة">
+      {% endif %}
+      <span class="status" style="--c: {{ item.color }}">{{ item.label }}</span>
+      {% if item.urgent %}<span class="chip chip-warn">🚨 عاجل</span>{% endif %}
+      <b class="pending-title">{{ item.title }}</b>
+      {% if item.kind == 'support' %}
+      <code>#{{ item.msg_id }}</code>
+      {% else %}
+      <code>{{ item.uid }}</code>
+      {% endif %}
+    </div>
+    <div class="pending-meta">
+      <span>{{ item.meta }}</span>
+      <span>{{ fmt(item.time_key) }}</span>
+    </div>
+    <div class="pending-actions">
+      {% if item.kind == 'member' %}
+        {% if item.status in ['SUBMITTED', 'UNDER_REVIEW'] %}
+        <form class="inline" method="post" action="{{ url_for('approve', user_id=item.uid) }}">
+          <input type="hidden" name="next" value="{{ request.full_path }}">
+          <button class="btn btn-sm btn-success" type="submit">✔ قبول</button>
+        </form>
+        <form class="inline q-reject-form" method="post" action="{{ url_for('batch_reject') }}">
+          <input type="hidden" name="ids" value="{{ item.uid }}">
+          <input type="hidden" name="reason" class="q-reason">
+          <input type="hidden" name="next" value="{{ request.full_path }}">
+          <button class="btn btn-sm btn-danger" type="submit">✖ رفض</button>
+        </form>
+        {% elif item.status == 'EXPIRED' %}
+        <form class="inline" method="post" action="{{ url_for('remove_from_chat', user_id=item.uid) }}"
+              onsubmit="return confirm('حذف هذا العضو من المجموعة بواسطة البوت؟');">
+          <input type="hidden" name="next" value="{{ request.full_path }}">
+          <button class="btn btn-sm btn-danger" type="submit">⛔ إزالة من القناة</button>
+        </form>
+        <form class="inline" method="post" action="{{ url_for('extend', user_id=item.uid) }}">
+          <input type="hidden" name="next" value="{{ request.full_path }}">
+          <button class="btn btn-sm btn-outline" type="submit">⏳ تمديد المهلة</button>
+        </form>
+        {% endif %}
+      <a class="btn btn-sm btn-outline" href="{{ url_for('member_detail', user_id=item.uid) }}">التفاصيل</a>
+      {% else %}
+      <a class="btn btn-sm btn-outline" href="{{ url_for('support_page', status='new') }}">📨 فتح وردّ من لوحة الدعم</a>
+      {% endif %}
+    </div>
+  </section>
+  {% endfor %}
+</div>
+</div>
+{% else %}
+<div class="empty">
+  <div class="ic"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4 12 14.01l-3-3"/></svg></div>
+  <b>لا شيء بانتظارك الآن 🎉</b>
+  <small>لا طلبات تحقق جديدة ولا رسائل دعم معلّقة.</small>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+{% if items %}
+const selectAll = null;
+const batchBar = document.getElementById('batch-bar');
+const batchCount = document.getElementById('batch-count-num');
+function selectedIds() {
+  return Array.from(document.querySelectorAll('.row-check:checked')).map(cb => cb.value);
+}
+function syncBatch() {
+  const ids = selectedIds();
+  if (batchCount) batchCount.textContent = ids.length;
+  if (batchBar) batchBar.style.display = ids.length ? 'flex' : 'none';
+}
+document.querySelectorAll('.row-check').forEach(cb => cb.addEventListener('change', syncBatch));
+document.querySelectorAll('.batch-bar form').forEach(form => {
+  form.addEventListener('submit', (e) => {
+    const ids = selectedIds();
+    if (!ids.length) { e.preventDefault(); return; }
+    form.querySelector('.b-ids').value = ids.join(',');
+    const reasonInput = form.querySelector('.b-reason');
+    if (reasonInput) {
+      const reason = prompt('سبب الرفض (يُرسل لجميع المحددين):', '');
+      if (reason === null || !reason.trim()) { e.preventDefault(); return; }
+      reasonInput.value = reason.trim();
+    }
+    const confirmMsg = form.dataset.confirm;
+    if (confirmMsg && !confirm(confirmMsg)) { e.preventDefault(); return; }
+  });
+});
+syncBatch();
+{% endif %}
+document.querySelectorAll('.q-reject-form').forEach(form => {
+  form.addEventListener('submit', (e) => {
+    const reason = prompt('سبب رفض هذا العضو:', '');
+    if (reason === null || !reason.trim()) { e.preventDefault(); return; }
+    form.querySelector('.q-reason').value = reason.trim();
+  });
+});
+</script>
+{% endblock %}

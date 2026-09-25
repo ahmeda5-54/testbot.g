@@ -2,91 +2,104 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>{% block title %}لوحة التحكم{% endblock %}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/glass.css') }}">
   {% block head %}{% endblock %}
+  <style>
+    .batch-bar{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);z-index:60;display:none;gap:8px;align-items:center;flex-wrap:wrap;justify-content:center;padding:10px 14px;border-radius:14px;box-shadow:0 10px 34px rgba(0,0,0,.4);background:#1c2030;border:1px solid #2a2f45;max-width:min(94vw,760px)}
+    .batch-count{color:#cbd5e1;font-size:13px}
+    .inline{display:inline-flex;margin:0}
+    .pending-list{display:flex;flex-direction:column;gap:10px}
+    .pending-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+    .pending-title{font-size:15px;font-weight:600}
+    .pending-meta{display:flex;justify-content:space-between;gap:12px;color:#94a3b8;font-size:13px;margin-top:8px;flex-wrap:wrap}
+    .pending-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+    .pending-card.urgent{border-color:rgba(239,68,68,.55)!important}
+    .trial-banner{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;border-radius:12px;border:1px solid rgba(245,158,11,.55);margin-bottom:14px;font-size:13.5px;color:#cbd5e1}
+    .trial-banner a{color:#5b6cff;font-weight:600;white-space:nowrap}
+  </style>
 </head>
 <body>
-<div class="app-shell">
-  {% set cur_tab = request.args.get('tab', 'all') %}
-  {% if request.endpoint == 'notifications' or request.endpoint == 'broadcast' %}
-    {% set active_nav = 'notifications' %}
-  {% elif request.endpoint in ('access_logs_page', 'access_logs_clear') %}
-    {% set active_nav = 'access' %}
-  {% elif request.endpoint in ('entries_page', 'entry_detail', 'entries_manual', 'entries_follow', 'entries_edit', 'entries_delete') %}
-    {% set active_nav = 'entries' %}
+<div class="orb a"></div><div class="orb b"></div><div class="orb c"></div>
+<div class="app">
+  {% if request.endpoint in ('clone_add', 'clone_delete', 'clone_scan_now', 'clone_config', 'clone_alert_status', 'settings_page', 'save_general_settings', 'save_userbot_settings', 'run_userbot_sync', 'run_userbot_login', 'resend_userbot_code', 'list_userbot_groups', 'restart_app', 'notifications', 'broadcast', 'access_logs_page', 'access_logs_clear', 'admin_actions_clear', 'save_automation_settings', 'faq_add', 'faq_delete') %}
+    {% set active_nav = 'settings' %}
   {% elif request.endpoint in ('support_page', 'support_reply', 'support_delete') %}
     {% set active_nav = 'support' %}
-  {% elif request.endpoint in ('settings_page', 'save_general_settings', 'save_userbot_settings', 'run_userbot_sync', 'list_userbot_groups', 'restart_app') %}
-    {% set active_nav = 'settings' %}
-  {% elif request.endpoint == 'index' and cur_tab == 'all' %}
-    {% set active_nav = 'dashboard' %}
-  {% elif request.endpoint in ('index', 'member_detail') %}
-    {% set active_nav = 'members' %}
+  {% elif request.endpoint == 'pending_queue' %}
+    {% set active_nav = 'pending' %}
+  {% elif request.endpoint in ('posts_page', 'posts_add', 'posts_toggle', 'posts_delete', 'posts_send_now') %}
+    {% set active_nav = 'posts' %}
   {% else %}
-    {% set active_nav = '' %}
+    {% set active_nav = 'dashboard' %}
   {% endif %}
 
-  <aside class="sidebar" id="sidebar">
-    <div class="sidebar-brand">
-      <div class="brand-mark">V</div>
-      <div>
-        <div class="brand-name">لوحة التحقق</div>
-        <div class="brand-sub">Verification Dashboard</div>
-      </div>
+  <aside class="glass">
+    <div class="brand">
+      <div class="logo">V</div>
+      <div><b>لوحة التحقق</b><small>Verification Dashboard</small></div>
     </div>
 
-    <nav class="sidebar-nav">
-      <a class="nav-link {{ 'active' if active_nav == 'dashboard' }}" href="{{ url_for('index') }}">
-        <span class="nav-ic">📊</span> لوحة الإحصائيات العامة
+    <nav>
+      <a class="{{ 'on' if active_nav == 'dashboard' }}" href="{{ url_for('index') }}">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="2"/><rect x="14" y="3" width="7" height="5" rx="2"/><rect x="14" y="12" width="7" height="9" rx="2"/><rect x="3" y="16" width="7" height="5" rx="2"/></svg>
+        لوحة التحكم
+        {% if dupe_count %}<span class="badge">{{ dupe_count }}</span>{% endif %}
       </a>
-      <a class="nav-link {{ 'active' if active_nav == 'members' }}" href="{{ url_for('index', tab='submitted') }}">
-        <span class="nav-ic">👥</span> إدارة المشتركين والطلبات
+      <a class="{{ 'on' if active_nav == 'pending' }}" href="{{ url_for('pending_queue') }}">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+        بانتظارك
+        {% if pending_count %}<span class="badge">{{ pending_count }}</span>{% endif %}
       </a>
-      <a class="nav-link {{ 'active' if active_nav == 'support' }}" href="{{ url_for('support_page') }}">
-        <span class="nav-ic">🛟</span> رسائل الدعم
-        {% if support_new %}
-        <span class="pill-badge nav-badge">{{ support_new }}</span>
-        {% endif %}
+      <a class="{{ 'on' if active_nav == 'posts' }}" href="{{ url_for('posts_page') }}">
+        <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 9h8M8 13h5M12 17h.01"/></svg>
+        جدولة النشر
       </a>
-      <a class="nav-link {{ 'active' if active_nav == 'settings' }}" href="{{ url_for('settings_page') }}">
-        <span class="nav-ic">⚙️</span> إعدادات البوت والتحقق
+      <a class="{{ 'on' if active_nav == 'support' }}" href="{{ url_for('support_page') }}">
+        <svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>
+        رسائل الدعم
+        {% if support_new %}<span class="badge">{{ support_new }}</span>{% endif %}
       </a>
-      <a class="nav-link {{ 'active' if active_nav == 'entries' }}" href="{{ url_for('entries_page') }}">
-        <span class="nav-ic">📈</span> دخولات السوق
+      <a class="{{ 'on' if active_nav == 'settings' }}" href="{{ url_for('settings_page') }}">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+        الإعدادات والمتابعة
       </a>
-      <a class="nav-link {{ 'active' if active_nav == 'access' }}" href="{{ url_for('access_logs_page') }}">
-        <span class="nav-ic">🛂</span> سجل الدخولات
-      </a>
-      <a class="nav-link {{ 'active' if active_nav == 'notifications' }}" href="{{ url_for('notifications') }}">
-        <span class="nav-ic">📢</span> الإشعارات العامة
-      </a>
+      {% if active_nav == 'settings' %}
+      <div class="subnav" id="settings-subnav">
+        <a class="sub-link" data-sec="sec-general" href="#sec-general">الإعدادات العامة</a>
+        <a class="sub-link" data-sec="sec-fields" href="#sec-fields">حقول التحقق</a>
+        <a class="sub-link" data-sec="sec-userbot" href="#sec-userbot">الحساب الشخصي (UserBot)</a>
+        <a class="sub-link" data-sec="sec-channel" href="#sec-channel">رسالة القناة والشروط</a>
+        <a class="sub-link" data-sec="sec-broadcast" href="#sec-broadcast">الإشعارات العامة</a>
+        <a class="sub-link" data-sec="sec-access" href="#sec-access">سجل الدخولات</a>
+        <a class="sub-link" data-sec="sec-admin-log" href="#sec-admin-log">سجل تعديلات الأدمن</a>
+        <a class="sub-link" data-sec="sec-automation" href="#sec-automation">أوتوماتيك المتابعة</a>
+        <a class="sub-link" data-sec="sec-faq" href="#sec-faq">الأسئلة الشائعة</a>
+        <a class="sub-link" data-sec="sec-clones" href="#sec-clones">مراقبة المقلّدة</a>
+      </div>
+      {% endif %}
     </nav>
 
-    <div class="sidebar-footer">
-      <div class="online">
-        <span class="dot {{ 'dot-ok' if bot_online else 'dot-bad' }}"></span>
-        <div>
-          <strong>{{ 'البوت متصل' if bot_online else 'البوت غير متصل' }}</strong>
-          <small>آخر نشاط: {{ bot_last_seen }}</small>
-        </div>
+    <div class="side-foot">
+      <div class="side-status">
+        <span class="dot {{ 'dot-bad' if not bot_online }}"></span>
+        <div><b>{{ 'البوت متصل' if bot_online else 'البوت غير متصل' }}</b><small>آخر نشاط: {{ bot_last_seen }}</small></div>
       </div>
-      <a class="logout-link" href="{{ url_for('logout') }}">↩ تسجيل الخروج</a>
+      <a class="logout" href="{{ url_for('logout') }}">
+        <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+        تسجيل الخروج
+      </a>
     </div>
   </aside>
-  <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
 
-  <div class="main-area">
-    <header class="topbar">
-      <div style="display:flex; align-items:center; gap:10px;">
-        <button class="menu-toggle" id="menu-toggle" type="button">☰</button>
-        <h1>{% block page_title %}لوحة التحكم{% endblock %}</h1>
-      </div>
-      <div class="topbar-actions">{% block topbar_actions %}{% endblock %}</div>
+  <main>
+    <header class="top glass">
+      <div><h1>{% block page_title %}لوحة التحكم{% endblock %}</h1></div>
+      <div class="acts">{% block topbar_actions %}{% endblock %}</div>
     </header>
 
     <div class="content">
@@ -97,12 +110,27 @@
           {% endfor %}
         {% endwith %}
       </div>
+      {% if license_state and not license_state.owner and license_state.valid and license_state.trial %}
+      <div class="trial-banner glass">
+        <span>🧪 <b>نسخة تجريبية</b> — متبقٍ <b>{{ '%.1f'|format(license_state.remaining_days if license_state.remaining_days is not none else 0) }}</b> يوم،
+        سقف الأعضاء <b>{{ license_state.max_members }}</b>.</span>
+        <a href="{{ url_for('activate') }}">التفعيل</a>
+      </div>
+      {% elif license_state and license_state.valid and not license_state.owner and not license_state.trial %}
+      <div class="trial-banner glass" style="border-color:rgba(16,185,129,.45)">
+        <span>✅ <b>نسخة مرخّصة دائمة</b>{% if license_state.customer %} — {{ license_state.customer }}{% endif %}</span>
+        <a href="{{ url_for('activate') }}">عرض</a>
+      </div>
+      {% endif %}
       {% block content %}{% endblock %}
     </div>
-  </div>
+  </main>
 </div>
 
 <script>
+document.querySelectorAll('.flash-wrap .flash').forEach(el => {
+  setTimeout(() => { el.classList.add('hide'); }, 4200);
+});
 document.querySelectorAll('.copy-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     navigator.clipboard.writeText(btn.dataset.copy).then(() => {
@@ -112,16 +140,39 @@ document.querySelectorAll('.copy-btn').forEach(btn => {
     });
   });
 });
-const sidebar = document.getElementById('sidebar');
-const backdrop = document.getElementById('sidebar-backdrop');
-document.getElementById('menu-toggle').addEventListener('click', () => {
-  sidebar.classList.toggle('open');
-  backdrop.classList.toggle('show');
-});
-backdrop.addEventListener('click', () => {
-  sidebar.classList.remove('open');
-  backdrop.classList.remove('show');
-});
+
+(function () {
+  const subnav = document.getElementById('settings-subnav');
+  if (!subnav) return;
+  const secs = Array.prototype.slice.call(document.querySelectorAll('.sett-sec'));
+  if (!secs.length) { subnav.style.display = 'none'; return; }
+  function find(id) {
+    for (let i = 0; i < secs.length; i++) {
+      if (secs[i].id === id) return secs[i];
+      if (id && secs[i].querySelector('#' + id)) return secs[i];
+    }
+    return null;
+  }
+  function show(sec) {
+    secs.forEach(s => { s.style.display = (s === sec) ? '' : 'none'; });
+    const active = sec ? sec.id : '';
+    subnav.querySelectorAll('.sub-link').forEach(a => {
+      a.classList.toggle('on', a.dataset.sec === active);
+    });
+  }
+  const start = find((location.hash || '').replace('#', ''));
+  show(start || secs[0]);
+  subnav.addEventListener('click', (e) => {
+    const a = e.target.closest('.sub-link');
+    if (!a) return;
+    e.preventDefault();
+    const target = find(a.dataset.sec);
+    if (target) {
+      show(target);
+      if (history && history.replaceState) history.replaceState(null, '', '#' + a.dataset.sec);
+    }
+  });
+})();
 </script>
 {% block scripts %}{% endblock %}
 </body>

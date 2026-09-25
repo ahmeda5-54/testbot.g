@@ -10,7 +10,7 @@ from aiogram.types import (
 
 import config
 import db
-from bot import bridge, texts
+from bot import bridge, license as license_mod, texts
 from bot.states import VerifyState
 from bot.support_menu import support_start_keyboard
 
@@ -157,6 +157,23 @@ async def submit_done_for(
     member = db.get_member(user_id)
     if member is None:
         return
+    blocked = db.is_account_blocked(member.get("tradingAccountNumber"))
+    if blocked is not None:
+        reason = blocked.get("reason") or "بدون سبب"
+        db.upsert_member(
+            user_id,
+            status=db.REJECTED,
+            rejectionReason=f"رقم الحساب محظور ({reason})",
+        )
+        member = db.get_member(user_id)
+        await state.clear()
+        await safe_answer(
+            message, texts.ACCOUNT_BLOCKED, reply_markup=support_start_keyboard()
+        )
+        bridge.notify_admins(
+            texts.admin_blocked_attempt(member, reason), config.ADMIN_IDS
+        )
+        return
     db.submit_member(user_id)
     member = db.get_member(user_id)
     await state.clear()
@@ -179,10 +196,13 @@ async def notify_admins(member: dict) -> None:
         candidate = config.UPLOADS_DIR / member["balanceImageUrl"]
         if candidate.exists():
             photo_path = str(candidate)
+    from bot.admin_actions import review_keyboard
+
     bridge.notify_admins(
         texts.admin_new_request(member),
         config.ADMIN_IDS,
         photo_path=photo_path,
+        reply_markup=review_keyboard(member["telegramUserId"]),
     )
 
 
@@ -194,6 +214,14 @@ async def begin_for(
     state: FSMContext,
 ) -> None:
     db.mark_talked(user_id)
+    # قيد النسخة التجريبية: بلغ سقف الأعضاء → لا يبدأ أحد جديداً
+    if license_mod.trial_full():
+        await safe_answer(
+            message,
+            texts.TRIAL_FULL_WARN,
+            reply_markup=support_start_keyboard(),
+        )
+        return
     save_profile_data(user_id, username, full_name)
     member = db.get_member(user_id)
     if member is not None and (

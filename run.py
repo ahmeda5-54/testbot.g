@@ -35,6 +35,9 @@ def main() -> None:
     import db
 
     db.init_db()
+    # مهم قبل بدء اللوحة: يطبق إعدادات معالج الإعداد الأول المخزنة في DB
+    # (البائع/المشتري يضبط كل شيء من /setup دون لمس ملف .env)
+    config.apply_db_overrides()
 
     threading.Thread(target=run_dashboard, daemon=True).start()
     print(

@@ -7,190 +7,567 @@
 {% endblock %}
 
 {% block content %}
-<h3 class="settings-section-title">الإعدادات العامة (البوت والمجموعة)</h3>
-<form class="card settings-form" method="post" action="{{ url_for('save_general_settings') }}">
-  <p class="settings-hint">
-    حدد هنا بيانات الروبوت والمجموعة الجديدة. بعد الحفظ يُعاد تشغيل النظام تلقائياً.
-    الحساب الشخصي (أدناه) هو من يفصل أسماء الأعضاء من <strong>معرف المجموعة أعلاه</strong>.
-  </p>
-  <label>توكن البوت (من @BotFather)</label>
-  <input type="password" dir="ltr" name="bot_token" value="{{ env.get('BOT_TOKEN', '') }}" placeholder="123456:ABC...">
-  <label>يوزرنيم البوت (بدون @)</label>
-  <input type="text" dir="ltr" name="bot_username" value="{{ env.get('BOT_USERNAME', '') }}" placeholder="boottest01ali_bot">
-  <label>معرف المجموعة/القناة CHANNEL_ID (رقم سالب غالباً)</label>
-  <input type="text" dir="ltr" name="channel_id" value="{{ env.get('CHANNEL_ID', '') }}" placeholder="-1001234567890">
-  <label>معرفات الأدمن (تفصل بفواصل)</label>
-  <input type="text" dir="ltr" name="admin_ids" value="{{ env.get('ADMIN_IDS', '') }}" placeholder="6245672130,111222333">
-  <label>مهلة التحقق بالساعات</label>
-  <input type="number" dir="ltr" name="deadline_hours" value="{{ env.get('DEADLINE_HOURS', '48') }}">
-  <label>بروكسي (اختياري، مثل socks5://127.0.0.1:1080)</label>
-  <input type="text" dir="ltr" name="proxy_url" value="{{ env.get('PROXY_URL', '') }}" placeholder="اختياري">
-  <label>طريقة تشغيل بوت الدعم (فصل واضح بين البوتين)</label>
-  <div class="support-mode-row" style="display:flex; flex-direction:column; gap:10px; margin-bottom:14px;">
-    <label class="check-row">
-      <input type="radio" name="support_mode" value="inline" {% if support_mode == 'inline' %}checked{% endif %}>
-      <span><strong>البوت الرئيسي فقط</strong> — كل المهام بما فيها الدعم داخل البوت الرئيسي، ولا يُشغَّل بوت الدعم مهما وُجد توكنه.</span>
-    </label>
-    <label class="check-row">
-      <input type="radio" name="support_mode" value="dedicated" {% if support_mode == 'dedicated' %}checked{% endif %}>
-      <span><strong>بوت دعم مخصص فقط</strong> — البوت الرئيسي لبقية المهام فقط، ومحادثات الدعم تمر عبر بوت الدعم حصرياً (يتطلب التوكن بالأسفل).</span>
-    </label>
-  </div>
-  <label>توكن بوت الدعم (من @BotFather — يُشغَّل في وضع «مخصص»)</label>
-  <input type="password" dir="ltr" name="support_bot_token" value="{{ env.get('SUPPORT_BOT_TOKEN', '') }}" placeholder="توكن بوت الدعم من @BotFather">
-  <label>يوزرنيم بوت الدعم (بدون @)</label>
-  <input type="text" dir="ltr" name="support_bot_username" value="{{ env.get('SUPPORT_BOT_USERNAME', '') }}" placeholder="support_bot123">
-  <button class="btn btn-check" type="submit">حفظ وإعادة تشغيل النظام</button>
-</form>
-<form class="card settings-form" method="post" action="{{ url_for('restart_app') }}" onsubmit="return confirm('إعادة تشغيل النظام الآن؟');">
-  <p class="settings-hint">لإعادة تشغيل البوت واللوحة دون تغيير الإعدادات.</p>
-  <button class="btn" type="submit">🔄 إعادة تشغيل النظام فقط</button>
-</form>
-
-<h3 class="settings-section-title">حقول التحقق</h3>
-<form class="card settings-form" method="post" action="{{ url_for('settings_page') }}">
-  <p class="settings-hint">
-    حدد البيانات التي يجب على المشترك إرسالها بالتسلسل للتحقق. تغيير الإعدادات
-    ينعكس فوراً على أسئلة البوت وعلى رسالة القناة عند نشرها.
-  </p>
-  {% for key, label in fields %}
-  <label class="check-row">
-    <input type="checkbox" name="{{ key }}" {% if current.get(key, '1') == '1' %}checked{% endif %}>
-    <span>{{ label }}</span>
-  </label>
-  {% endfor %}
-  <label>مدة صلاحية رابط دخول المجموعة المرسل عند القبول</label>
-  <div style="display:flex; gap:8px; align-items:center;" dir="ltr">
-    <input type="number" min="0" name="invite_link_value" value="{{ invite_value }}" style="flex:1" id="invite_link_value">
-    <select name="invite_link_unit" id="invite_link_unit" style="flex:1">
-      <option value="m" {% if invite_unit == 'm' %}selected{% endif %}>دقيقة</option>
-      <option value="h" {% if invite_unit == 'h' %}selected{% endif %}>ساعة</option>
-      <option value="d" {% if invite_unit == 'd' %}selected{% endif %}>يوم</option>
-    </select>
-  </div>
-  <p class="settings-hint">0 = رابط دائم. يسمح تلغرام بأنصاف المدد دقائق/ساعات وحتى 30 يوماً كحد أقصى — ويعمل مع القنوات الخاصة أيضاً.</p>
-  <button class="btn" type="submit">حفظ الإعدادات</button>
-</form>
-
-<h3 class="settings-section-title">الحساب الشخصي لسحب الأسماء (UserBot)</h3>
-<section class="card settings-form">
-  <p class="settings-hint">
-    البوت (Bot API) لا يستطيع سحب قائمة جميع الأعضاء. هذه الأداة تستخدم حسابك
-    التلغرامي الشخصي. البيانات من
-    <a href="https://my.telegram.org/apps" target="_blank">my.telegram.org/apps</a>.
-    سيسحب الأعضاء من المجموعة المعرفة في «الإعدادات العامة» أعلاه.
-  </p>
-  <form method="post" action="{{ url_for('save_userbot_settings') }}">
-    <label>api_id</label>
-    <input type="text" dir="ltr" name="userbot_api_id" value="{{ env.get('TB_API_ID', '') }}" placeholder="123456">
-    <label>api_hash</label>
-    <input type="text" dir="ltr" name="userbot_api_hash" value="{{ env.get('TB_API_HASH', '') }}">
-    <label>رقم الهاتف (بالصيغة الدولية، اختياري)</label>
-    <input type="text" dir="ltr" name="userbot_phone" value="{{ env.get('TB_PHONE', '') }}" placeholder="9647xxxxxxxx">
-    <label>اسم الجلسة (غيّره عند التبديل لحساب شخصي جديد)</label>
-    <input type="text" dir="ltr" name="userbot_session_name" value="{{ env.get('TB_SESSION_NAME', 'members_session') }}">
-    <button class="btn" type="submit">حفظ بيانات السحب</button>
+<section class="sett-sec" id="sec-general">
+  <h3 class="settings-section-title">الإعدادات العامة (البوت والمجموعة)</h3>
+  <form class="card settings-form" method="post" action="{{ url_for('save_general_settings') }}">
+    <p class="settings-hint">
+      حدد هنا بيانات الروبوت والمجموعة الجديدة. بعد الحفظ يُعاد تشغيل النظام تلقائياً.
+      الحساب الشخصي (أدناه) هو من يفصل أسماء الأعضاء من <strong>معرف المجموعة أعلاه</strong>.
+    </p>
+    <label>توكن البوت (من @BotFather)</label>
+    <input type="password" dir="ltr" name="bot_token" value="{{ env.get('BOT_TOKEN', '') }}" placeholder="123456:ABC...">
+    <label>يوزرنيم البوت (بدون @)</label>
+    <input type="text" dir="ltr" name="bot_username" value="{{ env.get('BOT_USERNAME', '') }}" placeholder="boottest01ali_bot">
+    <label>معرف المجموعة/القناة CHANNEL_ID (رقم سالب غالباً)</label>
+    <input type="text" dir="ltr" name="channel_id" value="{{ env.get('CHANNEL_ID', '') }}" placeholder="-1001234567890">
+    <label>معرفات الأدمن (تفصل بفواصل)</label>
+    <input type="text" dir="ltr" name="admin_ids" value="{{ env.get('ADMIN_IDS', '') }}" placeholder="6245672130,111222333">
+    <label>مهلة التحقق بالساعات</label>
+    <input type="number" dir="ltr" name="deadline_hours" value="{{ env.get('DEADLINE_HOURS', '48') }}">
+    <label>بروكسي (اختياري، مثل socks5://127.0.0.1:1080)</label>
+    <input type="text" dir="ltr" name="proxy_url" value="{{ env.get('PROXY_URL', '') }}" placeholder="اختياري">
+    <label>طريقة تشغيل بوت الدعم (فصل واضح بين البوتين)</label>
+    <div class="support-mode-row" style="display:flex; flex-direction:column; gap:10px; margin-bottom:14px;">
+      <label class="check-row">
+        <input type="radio" name="support_mode" value="inline" {% if support_mode == 'inline' %}checked{% endif %}>
+        <span><strong>البوت الرئيسي فقط</strong> — كل المهام بما فيها الدعم داخل البوت الرئيسي، ولا يُشغَّل بوت الدعم مهما وُجد توكنه.</span>
+      </label>
+      <label class="check-row">
+        <input type="radio" name="support_mode" value="dedicated" {% if support_mode == 'dedicated' %}checked{% endif %}>
+        <span><strong>بوت دعم مخصص فقط</strong> — البوت الرئيسي لبقية المهام فقط، ومحادثات الدعم تمر عبر بوت الدعم حصرياً (يتطلب التوكن بالأسفل).</span>
+      </label>
+    </div>
+    <label>توكن بوت الدعم (من @BotFather — يُشغَّل في وضع «مخصص»)</label>
+    <input type="password" dir="ltr" name="support_bot_token" value="{{ env.get('SUPPORT_BOT_TOKEN', '') }}" placeholder="توكن بوت الدعم من @BotFather">
+    <label>يوزرنيم بوت الدعم (بدون @)</label>
+    <input type="text" dir="ltr" name="support_bot_username" value="{{ env.get('SUPPORT_BOT_USERNAME', '') }}" placeholder="support_bot123">
+    <button class="btn btn-check" type="submit">حفظ وإعادة تشغيل النظام</button>
   </form>
-
-  <h4 class="ub-steps-title">📋 خطوات تسجيل حساب شخصي جديد (أول مرة فقط)</h4>
-  <ol id="ub-steps" class="settings-hint">
-    <li>من <a href="https://my.telegram.org/apps" target="_blank">my.telegram.org/apps</a> خذ api_id و api_hash للحساب الجديد.</li>
-    <li>عبّي الحقول أعلاه (api_id و api_hash ورقم الهاتف) واضغط «حفظ بيانات السحب».</li>
-    <li>انسخ الأوامر ثم اضغط Enter بعد كل أمر:</li>
-  </ol>
-  <pre id="ub-commands" class="channel-preview" dir="ltr">cd /d {{ base_dir }}
-python userbot_sync.py</pre>
-  <ol start="4" class="settings-hint">
-    <li>لما يظهر سؤال كود التفعيل: ضع الكود الذي يصل على تلغرام ثم Enter.</li>
-    <li>إذا طلب كلمة مرور الحساب (2FA): أدخلها ثم Enter.</li>
-    <li>لما تخلص، ارجع للوحة واضغط «🧲 سحب أعضاء المجموعة الآن».</li>
-  </ol>
-  <p class="settings-hint">
-    ملاحظة: إذا غيّرت «اسم الجلسة» في الحقول أعلاه، استخدم اسمه في الأمر كالتالي:
-    <code dir="ltr">python userbot_sync.py --session {{ env.get('TB_SESSION_NAME', 'members_session') }}</code>
-  </p>
-  <div class="ub-copy-row">
-    <button class="btn btn-sm" type="button" onclick="copyCommands(this)">📋 نسخ الأوامر</button>
-    <button class="btn btn-sm" type="button" onclick="copySteps(this)">📋 نسخ الخطوات كاملة</button>
-  </div>
-
-  {% if session_exists %}
-  <form method="post" action="{{ url_for('run_userbot_sync') }}">
-    <button class="btn btn-check" type="submit">🧲 سحب أعضاء المجموعة (الحالية من الإعدادات العامة)</button>
+  <form class="card settings-form" method="post" action="{{ url_for('restart_app') }}" onsubmit="return confirm('إعادة تشغيل النظام الآن؟');">
+    <p class="settings-hint">لإعادة تشغيل البوت واللوحة دون تغيير الإعدادات.</p>
+    <button class="btn" type="submit">🔄 إعادة تشغيل النظام فقط</button>
   </form>
-  <form method="post" action="{{ url_for('list_userbot_groups') }}">
-    <button class="btn" type="submit">👀 عرض مجموعاتي (اختر أي مجموعة تسحب منها)</button>
-  </form>
-  {% else %}
   <div class="card settings-form">
-    <h4 class="ub-steps-title">🔑 تسجيل الدخول بالحساب الجديد (مرة واحدة فقط)</h4>
     <p class="settings-hint">
-      تأكد أولاً أنك عدّلت: <strong>api_id / api_hash</strong> و<strong>رقم الهاتف</strong>
-      للحساب الجديد و<strong>اسم جلسة جديد</strong> (مثال: members_session2) ثم حفظت.
-      الآن Telegram سيرسل كود تفعيل على رقم الهاتف الجديد — أدخله هنا لتسجيل الدخول
-      مباشرة بدون نافذة CMD:
+      معالج الإعداد الأول (الذي يضع فيه كل مستخدم مفاتيحه من المتصفح) — يمكنك
+      فتحه لتعديل المفاتيح دون لمس ملفات.
     </p>
-    <form method="post" action="{{ url_for('run_userbot_login') }}">
-      <label>كود التفعيل (يصل على تلغرام)</label>
-      <input type="text" dir="ltr" name="code" required placeholder="00000" autocomplete="off">
-      <label>كلمة مرور الحساب 2FA (إن كانت مفعلة — اختياري)</label>
-      <input type="password" dir="ltr" name="password" placeholder="اختياري" autocomplete="off">
-      <button class="btn btn-check" type="submit">🔑 تسجيل الدخول بهذا الكود</button>
-    </form>
-    <form method="post" action="{{ url_for('resend_userbot_code') }}">
-      <button class="btn" type="submit">📲 إعادة إرسال كود التفعيل</button>
-    </form>
-    <p class="settings-hint">
-      أو يدوياً من نافذة أوامر (CMD) بالمجلد:
-      <code dir="ltr">python userbot_sync.py --session {{ env.get('TB_SESSION_NAME', 'members_session') }}</code>
-    </p>
+    <a class="btn btn-outline" href="{{ url_for('setup_page') }}">⚙️ معالج الإعداد الأول</a>
   </div>
-  {% endif %}
-  {% if groups_list %}
-  <table class="data-table">
-    <thead>
-      <tr><th>المجموعة</th><th>المعرّف</th><th>عدد الأعضاء</th><th></th></tr>
-    </thead>
-    <tbody>
-    {% for g in groups_list %}
-      <tr>
-        <td>{{ g.title }}</td>
-        <td dir="ltr">{{ g.id }}</td>
-        <td>{{ g.members }}</td>
-        <td>
-          <form method="post" action="{{ url_for('run_userbot_sync') }}" style="display:inline">
-            <input type="hidden" name="chat_id" value="{{ g.id }}">
-            <button class="btn btn-check btn-sm" type="submit">🧲 سحب منها</button>
-          </form>
-        </td>
-      </tr>
+  <div class="card settings-form">
+    <h3 style="font-size:15px;margin:0 0 8px">🔒 حالة الترخيص</h3>
+    {% if license_state.owner %}
+      <p class="settings-hint">وضع المالك — بلا قيود (لا يوجد سر توقيع LICENSE_SECRET).</p>
+    {% elif license_state.valid %}
+      {% if license_state.trial %}
+        <p class="settings-hint" style="color:#f59e0b">
+          نسخة تجريبية — متبقٍ {{ '%.1f'|format(license_state.remaining_days if license_state.remaining_days is not none else 0) }} يوم،
+          سقف الأعضاء {{ license_state.max_members }}{% if license_state.customer %}، العميل: {{ license_state.customer }}{% endif %}.
+        </p>
+      {% else %}
+        <p class="settings-hint" style="color:#10b981">
+          نسخة دائمة مفعّلة{% if license_state.customer %} — العميل: {{ license_state.customer }}{% endif %}.
+        </p>
+      {% endif %}
+    {% else %}
+      <p class="settings-hint" style="color:#ef4444">النسخة غير مفعّلة أو انتهت صلاحيتها.</p>
+    {% endif %}
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <a class="btn btn-outline" href="{{ url_for('activate') }}">🔑 شاشة التفعيل/إدخال كود</a>
+      <form method="post" action="{{ url_for('reset_store') }}" onsubmit="return confirm('تحذير! سيتم مسح كل الأعضاء والرسائل والسجلات والإعدادات استعداداً لعميل جديد. هل أنت متأكد؟');">
+        <button class="btn" type="submit" style="background:#3f1620;color:#fca5a5;border:1px solid rgba(239,68,68,.4)">🗑️ إعادة تهيئة لعميل جديد</button>
+      </form>
+    </div>
+  </div>
+</section>
+
+<section class="sett-sec" id="sec-fields">
+  <h3 class="settings-section-title">حقول التحقق</h3>
+  <form class="card settings-form" method="post" action="{{ url_for('settings_page') }}">
+    <p class="settings-hint">
+      حدد البيانات التي يجب على المشترك إرسالها بالتسلسل للتحقق. تغيير الإعدادات
+      ينعكس فوراً على أسئلة البوت وعلى رسالة القناة عند نشرها.
+    </p>
+    {% for key, label in fields %}
+    <label class="check-row">
+      <input type="checkbox" name="{{ key }}" {% if current.get(key, '1') == '1' %}checked{% endif %}>
+      <span>{{ label }}</span>
+    </label>
     {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
+    <label>مدة صلاحية رابط دخول المجموعة المرسل عند القبول</label>
+    <div style="display:flex; gap:8px; align-items:center;" dir="ltr">
+      <input type="number" min="0" name="invite_link_value" value="{{ invite_value }}" style="flex:1" id="invite_link_value">
+      <select name="invite_link_unit" id="invite_link_unit" style="flex:1">
+        <option value="m" {% if invite_unit == 'm' %}selected{% endif %}>دقيقة</option>
+        <option value="h" {% if invite_unit == 'h' %}selected{% endif %}>ساعة</option>
+        <option value="d" {% if invite_unit == 'd' %}selected{% endif %}>يوم</option>
+      </select>
+    </div>
+    <p class="settings-hint">0 = رابط دائم. يسمح تلغرام بأنصاف المدد دقائق/ساعات وحتى 30 يوماً كحد أقصى — ويعمل مع القنوات الخاصة أيضاً.</p>
+    <button class="btn" type="submit">حفظ الإعدادات</button>
+  </form>
 </section>
 
-<section class="card settings-form">
-  <h3>نشر الرسالة الحالية</h3>
-  <pre class="channel-preview">{{ preview }}</pre>
-  <p class="settings-hint">روسل الرسالة مجدداً من زر «نشر وتثبيت» لتطبيق الحقول المحددة.</p>
+<section class="sett-sec" id="sec-userbot">
+  <h3 class="settings-section-title">الحساب الشخصي لسحب الأسماء (UserBot)</h3>
+  <section class="card settings-form">
+    <p class="settings-hint">
+      البوت (Bot API) لا يستطيع سحب قائمة جميع الأعضاء. هذه الأداة تستخدم حسابك
+      التلغرامي الشخصي. البيانات من
+      <a href="https://my.telegram.org/apps" target="_blank">my.telegram.org/apps</a>.
+      سيسحب الأعضاء من المجموعة المعرفة في «الإعدادات العامة» أعلاه.
+    </p>
+    <form method="post" action="{{ url_for('save_userbot_settings') }}">
+      <label>api_id</label>
+      <input type="text" dir="ltr" name="userbot_api_id" value="{{ env.get('TB_API_ID', '') }}" placeholder="123456">
+      <label>api_hash</label>
+      <input type="text" dir="ltr" name="userbot_api_hash" value="{{ env.get('TB_API_HASH', '') }}">
+      <label>رقم الهاتف (بالصيغة الدولية، اختياري)</label>
+      <input type="text" dir="ltr" name="userbot_phone" value="{{ env.get('TB_PHONE', '') }}" placeholder="9647xxxxxxxx">
+      <label>اسم الجلسة (غيّره عند التبديل لحساب شخصي جديد)</label>
+      <input type="text" dir="ltr" name="userbot_session_name" value="{{ env.get('TB_SESSION_NAME', 'members_session') }}">
+      <button class="btn" type="submit">حفظ بيانات السحب</button>
+    </form>
+
+    <details style="margin-top:10px;">
+      <summary class="ub-steps-title">📋 خطوات تسجيل حساب شخصي جديد (أول مرة فقط)</summary>
+      <div style="margin-top:10px;">
+      <ol id="ub-steps" class="settings-hint">
+        <li>من <a href="https://my.telegram.org/apps" target="_blank">my.telegram.org/apps</a> خذ api_id و api_hash للحساب الجديد.</li>
+        <li>عبّي الحقول أعلاه (api_id و api_hash ورقم الهاتف) واضغط «حفظ بيانات السحب».</li>
+        <li>انسخ الأوامر ثم اضغط Enter بعد كل أمر:</li>
+      </ol>
+      <pre id="ub-commands" class="channel-preview" dir="ltr">cd /d {{ base_dir }}
+python userbot_sync.py</pre>
+      <ol start="4" class="settings-hint">
+        <li>لما يظهر سؤال كود التفعيل: ضع الكود الذي يصل على تلغرام ثم Enter.</li>
+        <li>إذا طلب كلمة مرور الحساب (2FA): أدخلها ثم Enter.</li>
+        <li>لما تخلص، ارجع للوحة واضغط «🧲 سحب أعضاء المجموعة الآن».</li>
+      </ol>
+      <p class="settings-hint">
+        ملاحظة: إذا غيّرت «اسم الجلسة» في الحقول أعلاه، استخدم اسمه في الأمر كالتالي:
+        <code dir="ltr">python userbot_sync.py --session {{ env.get('TB_SESSION_NAME', 'members_session') }}</code>
+      </p>
+      <div class="ub-copy-row">
+        <button class="btn btn-sm" type="button" onclick="copyCommands(this)">📋 نسخ الأوامر</button>
+        <button class="btn btn-sm" type="button" onclick="copySteps(this)">📋 نسخ الخطوات كاملة</button>
+      </div>
+      </div>
+    </details>
+
+    {% if session_exists %}
+    <form method="post" action="{{ url_for('run_userbot_sync') }}">
+      <button class="btn btn-check" type="submit">🧲 سحب أعضاء المجموعة (الحالية من الإعدادات العامة)</button>
+    </form>
+    <form method="post" action="{{ url_for('list_userbot_groups') }}">
+      <button class="btn" type="submit">👀 عرض مجموعاتي (اختر أي مجموعة تسحب منها)</button>
+    </form>
+    {% else %}
+    <div class="card settings-form">
+      <h4 class="ub-steps-title">🔑 تسجيل الدخول بالحساب الجديد (مرة واحدة فقط)</h4>
+      <p class="settings-hint">
+        تأكد أولاً أنك عدّلت: <strong>api_id / api_hash</strong> و<strong>رقم الهاتف</strong>
+        للحساب الجديد و<strong>اسم جلسة جديد</strong> (مثال: members_session2) ثم حفظت.
+        الآن Telegram سيرسل كود تفعيل على رقم الهاتف الجديد — أدخله هنا لتسجيل الدخول
+        مباشرة بدون نافذة CMD:
+      </p>
+      <form method="post" action="{{ url_for('run_userbot_login') }}">
+        <label>كود التفعيل (يصل على تلغرام)</label>
+        <input type="text" dir="ltr" name="code" required placeholder="00000" autocomplete="off">
+        <label>كلمة مرور الحساب 2FA (إن كانت مفعلة — اختياري)</label>
+        <input type="password" dir="ltr" name="password" placeholder="اختياري" autocomplete="off">
+        <button class="btn btn-check" type="submit">🔑 تسجيل الدخول بهذا الكود</button>
+      </form>
+      <form method="post" action="{{ url_for('resend_userbot_code') }}">
+        <button class="btn" type="submit">📲 إعادة إرسال كود التفعيل</button>
+      </form>
+      <p class="settings-hint">
+        أو يدوياً من نافذة أوامر (CMD) بالمجلد:
+        <code dir="ltr">python userbot_sync.py --session {{ env.get('TB_SESSION_NAME', 'members_session') }}</code>
+      </p>
+    </div>
+    {% endif %}
+    {% if groups_list %}
+    <table class="data-table">
+      <thead>
+        <tr><th>المجموعة</th><th>المعرّف</th><th>عدد الأعضاء</th><th></th></tr>
+      </thead>
+      <tbody>
+      {% for g in groups_list %}
+        <tr>
+          <td>{{ g.title }}</td>
+          <td dir="ltr">{{ g.id }}</td>
+          <td>{{ g.members }}</td>
+          <td>
+            <form method="post" action="{{ url_for('run_userbot_sync') }}" style="display:inline">
+              <input type="hidden" name="chat_id" value="{{ g.id }}">
+              <button class="btn btn-check btn-sm" type="submit">🧲 سحب منها</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
 </section>
 
-<h3 class="settings-section-title">نص الرسالة المثبتة وشروط الدخول</h3>
-<form class="card settings-form" method="post" action="{{ url_for('settings_page') }}">
-  <p class="settings-hint">
-    اكتب هنا نص الرسالة التي تُثبَّت في القناة، وأيضاً شروط الاشتراك/الدخول للقناة.
-    تظهر الشروط في رسالة الترحيب أول مرة، وفي آخر رسالة القناة المثبتة.
-    إن تُرك «نص الرسالة» فارغاً ستعود الرسالة للنص الافتراضي.
-  </p>
-  <label for="channel_message_custom">نص الرسالة المثبتة (اختياري — يوضع مكان الافتراضي)</label>
-  <textarea id="channel_message_custom" name="channel_message_custom" rows="5"
-            placeholder="اكتب نص الرسالة المثبتة هنا...&#10;يمكنك استخدام {hours} لعدد الساعات و{fields} لقائمة البيانات المطلوبة.">{{ custom_text }}</textarea>
-  <label for="entry_terms">شروط الاشتراك / دخول القناة (اختياري)</label>
-  <textarea id="entry_terms" name="entry_terms" rows="4"
-            placeholder="مثال:&#10;- الالتزام بقوانين القناة.&#10;- إرسال بيانات حقيقية للتحقق.">{{ entry_terms }}</textarea>
-  <button class="btn btn-check" type="submit">حفظ النص والشروط</button>
-</form>
+<section class="sett-sec" id="sec-channel">
+  <h3 class="settings-section-title">رسالة القناة المثبتة وشروط الدخول</h3>
+  <form class="card settings-form" method="post" action="{{ url_for('settings_page') }}" id="channel-message">
+    <p class="settings-hint">
+      اكتب هنا نص الرسالة التي تُثبَّت في القناة، وأيضاً شروط الاشتراك/الدخول للقناة.
+      تظهر الشروط في رسالة الترحيب أول مرة، وفي آخر رسالة القناة المثبتة.
+      إن تُرك «نص الرسالة» فارغاً ستعود الرسالة للنص الافتراضي.
+    </p>
+    <details style="margin-bottom:12px;">
+      <summary class="settings-hint">👁 معاينة الرسالة الحالية</summary>
+      <pre class="channel-preview">{{ preview }}</pre>
+      <p class="settings-hint">روسل الرسالة مجدداً من زر «نشر وتثبيت» لتطبيق الحقول المحددة.</p>
+    </details>
+    <label for="channel_message_custom">نص الرسالة المثبتة (اختياري — يوضع مكان الافتراضي)</label>
+    <textarea id="channel_message_custom" name="channel_message_custom" rows="5"
+              placeholder="اكتب نص الرسالة المثبتة هنا...&#10;يمكنك استخدام {hours} لعدد الساعات و{fields} لقائمة البيانات المطلوبة.">{{ custom_text }}</textarea>
+    <label for="entry_terms">شروط الاشتراك / دخول القناة (اختياري)</label>
+    <textarea id="entry_terms" name="entry_terms" rows="4"
+              placeholder="مثال:&#10;- الالتزام بقوانين القناة.&#10;- إرسال بيانات حقيقية للتحقق.">{{ entry_terms }}</textarea>
+    <button class="btn btn-check" type="submit">حفظ النص والشروط</button>
+  </form>
+</section>
+
+<section class="sett-sec" id="sec-broadcast">
+  <h3 class="settings-section-title">الإشعارات العامة / الرسائل النصية</h3>
+  <section class="card settings-form" id="broadcast">
+    <p class="settings-hint">
+      أرسل إشعاراً نصياً في الخلفية للمشتركين حسب الفئة المختارة. مجموع أعضاء المجموعة الآن:
+      <strong>{{ counts['ALL'] }}</strong> (مقبولون: {{ counts.get('VERIFIED', 0) }}) —
+      إن اخترت «متابعة الفحص» سيُرسل الإشعار لـ
+      {{ counts.get('PENDING', 0) + counts.get('NOT_STARTED', 0) }} عضواً معلّقاً.
+    </p>
+    <form method="post" action="{{ url_for('broadcast') }}">
+      <label>المجموعة المستهدفة</label>
+      <select name="scope">
+        <option value="all">الكل — {{ counts['ALL'] }} عضواً</option>
+        <option value="pending">المعلّقون (لم يتقدموا بعد) — {{ counts.get('PENDING', 0) + counts.get('NOT_STARTED', 0) }}</option>
+        <option value="unverified">غير المقبولين (بلا رفض نهائي)</option>
+        <option value="verified">المقبولون — {{ counts.get('VERIFIED', 0) }}</option>
+        <option value="rejected">المرفوضون + انتهت مهلتهم</option>
+        <option value="single">عضو محدد فقط</option>
+        <option value="group">منشور عام داخل القناة (بدون إرسال خاص)</option>
+      </select>
+      <div id="single-target" style="display:none;">
+        <label>اختر العضو</label>
+        <select name="target_user_id">
+          <option value="">— اختر —</option>
+          {% for m in members %}
+          <option value="{{ m.telegramUserId }}">{{ m.telegramName or m.telegramUserId }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <label>نص الإشعار</label>
+      <textarea name="message" rows="3" placeholder="اكتب نص الإشعار هنا..."></textarea>
+      <label>صورة إرفاق (اختياري)</label>
+      <input type="file" name="photo" accept=".jpg,.jpeg,.png,.webp">
+      <button class="btn btn-check" type="submit">📢 إرسال الإشعار</button>
+    </form>
+
+    {% if broadcasts %}
+    <details style="margin-top:14px;">
+      <summary class="settings-hint">🕘 آخر الإشعارات المرسلة ({{ broadcasts|length }})</summary>
+      <table class="data-table">
+        <thead><tr><th>الوقت</th><th>الفئة</th><th>المستلمون</th><th>النص</th></tr></thead>
+        <tbody>
+        {% for b in broadcasts %}
+          <tr>
+            <td>{{ fmt(b.created_at) }}</td>
+            <td>{{ b.scope }}</td>
+            <td>{{ b.recipient_count }}</td>
+            <td>{{ (b.message or '')[:60] }}{% if b.message and b.message|length > 60 %}…{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </details>
+    {% endif %}
+    <script>
+      var scopeSel = document.querySelector('[name="scope"]');
+      var singleBox = document.getElementById('single-target');
+      if (scopeSel && singleBox) {
+        scopeSel.addEventListener('change', function(){
+          singleBox.style.display = (scopeSel.value === 'single') ? 'block' : 'none';
+        });
+      }
+    </script>
+  </section>
+</section>
+
+<section class="sett-sec" id="sec-access">
+  <h3 class="settings-section-title">سجل الدخولات إلى اللوحة</h3>
+  <section class="card settings-form" id="access">
+    <p class="settings-hint">
+      آخر محاولات الدخول إلى اللوحة (آخر 50 سجلاً). الإجمالي:
+      <strong>{{ access_counts.get('login_success', 0) + access_counts.get('login_fail', 0) + access_counts.get('logout', 0) }}</strong>
+      (ناجحة: {{ access_counts.get('login_success', 0) }}، فاشلة: {{ access_counts.get('login_fail', 0) }}).
+    </p>
+    {% if access_logs %}
+    <details>
+      <summary class="settings-hint">🕘 عرض السجل</summary>
+      <table class="data-table">
+        <thead><tr><th>الوقت</th><th>الحالة</th><th>التفاصيل</th><th>IP</th></tr></thead>
+        <tbody>
+        {% for log in access_logs %}
+          <tr>
+            <td style="white-space:nowrap;">{{ fmt(log.createdAt) }}</td>
+            <td>
+              {% if log.action == 'login_success' %}<span class="chip chip-ok">دخول ناجح</span>
+              {% elif log.action == 'login_fail' %}<span class="chip chip-bad">محاولة فاشلة</span>
+              {% elif log.action == 'logout' %}<span class="chip chip-neutral">خروج</span>
+              {% else %}<span class="chip chip-neutral">{{ log.action }}</span>{% endif %}
+            </td>
+            <td>{{ log.detail or '—' }}</td>
+            <td dir="ltr">{{ log.ip or '—' }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </details>
+    <form method="post" action="{{ url_for('access_logs_clear') }}" onsubmit="return confirm('مسح كل سجلات الدخول؟');">
+      <button class="btn" type="submit">🗑 مسح السجل</button>
+    </form>
+    {% else %}
+    <p class="settings-hint">لا توجد سجلات دخول بعد.</p>
+    {% endif %}
+  </section>
+</section>
+
+<section class="sett-sec" id="sec-admin-log">
+  <h3 class="settings-section-title">سجل تعديلات الأدمن</h3>
+  <section class="card settings-form" id="admin-log">
+    <p class="settings-hint">
+      كل إجراء مهم من اللوحة (قبول، رفض، حذف، حظر، نشر، بث، قوالب...) يُسجل باسم
+      الأدمن الذي قام به وتوقيته. الإجمالي:
+      <strong>{{ admin_action_counts.values() | sum }}</strong> إجراءاً
+      (آخر 200 معروضة). للتمييز بين عدة أدمن اكتب اسمك في شاشة تسجيل الدخول.
+    </p>
+    {% if admin_actions %}
+    <details>
+      <summary class="settings-hint">🕘 عرض سجل التعديلات</summary>
+      <table class="data-table">
+        <thead><tr><th>الوقت</th><th>الأدمن</th><th>الإجراء</th><th>التفاصيل</th></tr></thead>
+        <tbody>
+        {% for act in admin_actions %}
+          <tr>
+            <td style="white-space:nowrap;">{{ fmt(act.createdAt) }}</td>
+            <td>{{ act.admin or '—' }}</td>
+            <td><span class="chip chip-neutral">{{ act.action }}</span></td>
+            <td>{{ act.detail or '—' }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </details>
+    <form method="post" action="{{ url_for('admin_actions_clear') }}" onsubmit="return confirm('مسح كل سجل تعديلات الأدمن؟');">
+      <button class="btn" type="submit">🗑 مسح السجل</button>
+    </form>
+    {% else %}
+    <p class="settings-hint">لا توجد تعديلات مسجلة بعد.</p>
+    {% endif %}
+  </section>
+</section>
+
+<section class="sett-sec" id="sec-automation">
+  <h3 class="settings-section-title">أوتوماتيك المتابعة (تذكير وإزالة)</h3>
+  <section class="card settings-form" id="automation">
+    <p class="settings-hint">
+      تُشغَّل هذه المهام تلقائياً في الخلفية كل دقيقة وتُحفظ مباشرة (بدون إعادة تشغيل النظام).
+      <strong>التذكير</strong>: رسالة خاصة للمشترك قبل انتهاء مهلته بمقدار الساعات المحددة
+      (تُرسل كل مهلة مرة واحدة لكل تذكير، وتُعاد الفرصة عند تمديد المهلة).
+      <strong>الإزالة</strong>: حذف العضو من المجموعة تلقائياً بعد انتهاء مهلة السماح
+      المحددة بالأسفل — سواء لمن انتهت مهلته أو لمن رُفض طلبه نهائياً (ويشمل من سينتهي لاحقاً
+      بعد المدة المذكورة).
+    </p>
+    <form method="post" action="{{ url_for('save_automation_settings') }}">
+      <label class="check-row">
+        <input type="checkbox" name="reminder_enabled" {% if current.get('reminder_enabled', '1') == '1' %}checked{% endif %}>
+        <span>تفعيل التذكير التلقائي قبل انتهاء المهلة</span>
+      </label>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <label style="flex:1">التذكير الأوّل قبل انتهاء المهلة بـ (ساعات)</label>
+        <input type="number" min="0" style="flex:1" name="reminder_hours_1" value="{{ current.get('reminder_hours_1', '6') }}">
+      </div>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <label style="flex:1">التذكير الثاني (تنبيه أخير) قبل انتهاء المهلة بـ (ساعات)</label>
+        <input type="number" min="0" style="flex:1" name="reminder_hours_2" value="{{ current.get('reminder_hours_2', '1') }}">
+      </div>
+      <p class="settings-hint">
+        <strong>الإزالة التلقائية من المجموعة</strong> — تُطبَّق بعد انقضاء مهلة السماح المحددة
+        (0 = فوراً عند انتهاء المهلة أو عند الرفض).
+      </p>
+      <label class="check-row">
+        <input type="checkbox" name="auto_remove_expired" {% if current.get('auto_remove_expired', '0') == '1' %}checked{% endif %}>
+        <span>إزالة من انتهت مهلتهم (EXPIRED) تلقائياً</span>
+      </label>
+      <label class="check-row">
+        <input type="checkbox" name="auto_remove_rejected" {% if current.get('auto_remove_rejected', '0') == '1' %}checked{% endif %}>
+        <span>إزالة المرفوضين نهائياً (REJECTED) تلقائياً</span>
+      </label>
+      <label>مهلة السماح بالإزالة (ساعات — تحسب من وقت انتهاء المهلة أو الرفض)</label>
+      <input type="number" min="0" name="auto_remove_grace_hours" value="{{ current.get('auto_remove_grace_hours', '0') }}">
+      <button class="btn btn-check" type="submit">حفظ إعدادات الأوتوماتيك</button>
+    </form>
+  </section>
+</section>
+
+<section class="sett-sec" id="sec-faq">
+  <h3 class="settings-section-title">ردود الأسئلة الشائعة (تلقائي)</h3>
+  <section class="card settings-form" id="faq">
+    <p class="settings-hint">
+      إذا احتوت رسالة الدعم على أي كلمة مفتاحية (تفصل بفاصلة)، يرد البوت تلقائياً بنص الرد
+      المحدد مباشرة — دون أن تستنفد رسالة الدعم الواحدة المسموحة للمستخدم. تُعامل
+      الكلمات بعد تجريدها من التشكيل والهمزات (مثل: حساب ↔ حســاب، استياد ↔ استيد).
+    </p>
+    <form method="post" action="{{ url_for('faq_add') }}">
+      <label>الكلمات المفتاحية (تفصل بفاصلة ،)</label>
+      <input type="text" dir="rtl" name="faq_keywords" placeholder="الوسطاء, بنك, رفع صورة" required>
+      <label>نص الرد التلقائي</label>
+      <textarea name="faq_reply" rows="3" required placeholder="اكتب الرد الذي يظهر للمشترك فوراً..."></textarea>
+      <button class="btn btn-check" type="submit">➕ إضافة الرد</button>
+    </form>
+
+    {% if faq_rules %}
+    <table class="data-table" style="margin-top:14px;">
+      <thead>
+        <tr>
+          <th>الكلمات</th><th>الرد</th><th>المرات</th><th>الحالة</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for rule in faq_rules %}
+        <tr>
+          <td style="max-width:200px;">{{ rule.keywords }}</td>
+          <td style="max-width:320px;">{{ (rule.reply)[:60] }}{% if rule.reply|length > 60 %}…{% endif %}</td>
+          <td>{{ rule.hits }}</td>
+          <td>
+            {% if rule.enabled %}<span class="chip chip-ok">مفعّل</span>
+            {% else %}<span class="chip chip-neutral">معطّل</span>{% endif %}
+          </td>
+          <td>
+            <form method="post" action="{{ url_for('faq_delete', rule_id=rule.id) }}"
+                  onsubmit="return confirm('حذف هذا الرد التلقائي؟');" style="display:inline">
+              <button class="btn btn-sm" type="submit">🗑 حذف</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="settings-hint">لا توجد ردود تلقائية بعد — أضف أول رد بالأعلى.</p>
+    {% endif %}
+  </section>
+</section>
+
+<section class="sett-sec" id="sec-clones">
+  <h3 class="settings-section-title">مراقبة القنوات المقلّدة</h3>
+  <section class="card settings-form" id="clones">
+    <p class="settings-hint">
+      راقب قنواتك الأصلية لاكتشاف القنوات المقلّدة (نفس الاسم/الصورة/المعرّف). يفحص النظام
+      القنوات المشابهة بالعنوان واليوزرنيم والصورة ويُنبّه عند تجاوز عتبة الاشتباه —
+      عبر Bot API فقط (بدون الحاجة لجلسة حساب شخصي).
+    </p>
+    <form method="post" action="{{ url_for('clone_add') }}">
+      <label for="clone_username">يوزرنيم القناة الأصلية للمراقبة (بدون @) — مثال: mychannel</label>
+      <input type="text" dir="ltr" id="clone_username" name="clone_username" placeholder="mychannel" minlength="4" maxlength="32" required>
+      <button class="btn btn-check" type="submit">➕ إضافة للمراقبة</button>
+    </form>
+
+    <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end;">
+      <form method="post" action="{{ url_for('clone_scan_now') }}">
+        <button class="btn" type="submit">🔍 فحص الآن</button>
+      </form>
+      <form class="inline-form" method="post" action="{{ url_for('clone_config') }}">
+        <label for="clone_check_hours" style="font-size:12px;">فحص تلقائي كل</label>
+        <input type="number" id="clone_check_hours" name="clone_check_hours" min="0" max="168" value="{{ clone_check_hours }}" style="width:90px;">
+        <span style="font-size:12px; color:var(--muted);">ساعة (0 = يدوي فقط)</span>
+        <button class="btn btn-sm" type="submit">حفظ</button>
+      </form>
+    </div>
+
+    {% if clone_watch %}
+    <table class="data-table" style="margin-top:6px;">
+      <thead>
+        <tr>
+          <th>القناة المراقبة</th>
+          <th>تاريخ الإضافة</th>
+          <th>آخر فحص</th>
+          <th>أخطاء وصول</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for w in clone_watch %}
+        <tr>
+          <td dir="ltr">@{{ w.username }}</td>
+          <td>{{ fmt(w.addedAt) }}</td>
+          <td>{{ fmt(w.lastCheckedAt) }}</td>
+          <td>{{ w.unreachable }}</td>
+          <td>
+            <form method="post" action="{{ url_for('clone_delete', watch_id=w.id) }}"
+                  onsubmit="return confirm('إيقاف مراقبة هذه القناة؟');" style="display:inline">
+              <button class="btn btn-danger btn-sm" type="submit">🗑 إزالة</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="settings-hint">لا قنوات مراقبة حالياً — أضف القناة الأولى بالأعلى.</p>
+    {% endif %}
+
+    {% if clone_alerts %}
+    <div style="display:flex; flex-direction:column; gap:10px; margin-top:6px;">
+      {% for a in clone_alerts %}
+      <div class="card" style="padding:12px 14px; border-inline-start:4px solid {{ 'var(--bad)' if a.status == 'new' else 'var(--line)' }};">
+        <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:space-between;">
+          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+            <code dir="ltr">@{{ a.username }}</code>
+            {% if a.status == 'new' %}<span class="chip chip-bad">جديد</span>
+            {% elif a.status == 'confirmed' %}<span class="chip chip-bad">مؤكّد</span>
+            {% elif a.status == 'ignored' %}<span class="chip chip-neutral">مُتجاهَل</span>
+            {% else %}<span class="chip chip-ok">محلول</span>{% endif %}
+            {% if a.channelId %}<small style="color:var(--muted)">القناة المكتشفة: <code dir="ltr">{{ a.channelId }}</code></small>{% endif %}
+          </div>
+          <small style="color:var(--muted);">
+            {{ fmt(a.firstSeenAt) }} · تشابه {{ "%.0f" | format(a.score * 100) }}% · عنوان {{ "%.0f" | format(a.titleRatio * 100) }}%
+          </small>
+        </div>
+        {% if a.title %}<p style="margin:8px 0 0; font-size:13px;">{{ a.title }}</p>{% endif %}
+        <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
+          {% if a.status in ('new', 'ignored', 'resolved') %}
+          <form method="post" action="{{ url_for('clone_alert_status', alert_id=a.id, status='confirmed') }}" style="display:inline">
+            <button class="btn btn-sm btn-check" type="submit">✔ تأكيد الاشتباه</button>
+          </form>
+          {% endif %}
+          {% if a.status in ('new', 'confirmed') %}
+          <form method="post" action="{{ url_for('clone_alert_status', alert_id=a.id, status='ignored') }}" style="display:inline">
+            <button class="btn btn-sm" type="submit">تجاهل</button>
+          </form>
+          {% endif %}
+          {% if a.status in ('new', 'confirmed', 'ignored') %}
+          <form method="post" action="{{ url_for('clone_alert_status', alert_id=a.id, status='resolved') }}" style="display:inline">
+            <button class="btn btn-sm btn-outline" type="submit">حل</button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="settings-hint">لا تنبيهات اشتباه مقلّد حتى الآن — تُحدَّث تلقائياً حسب دورة الفحص.</p>
+    {% endif %}
+  </section>
+</section>
 {% endblock %}
 
 {% block scripts %}

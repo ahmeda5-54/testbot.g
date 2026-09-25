@@ -7,11 +7,11 @@
 {% endblock %}
 
 {% block content %}
-<main class="detail">
+<div class="detail">
   <div class="detail-main">
     <section class="card">
       <div class="card-head">
-        <span class="status" style="background: {{ STATUS_COLORS[member.status] }}">
+        <span class="status" style="--c: {{ STATUS_COLORS[member.status] }}">
           {{ STATUS_LABELS[member.status] }}
         </span>
         <div class="card-head-actions">
@@ -37,6 +37,59 @@
         <div><dt>تاريخ المراجعة</dt><dd>{{ fmt(member.reviewedAt) }}</dd></div>
         <div><dt>سبب الرفض</dt><dd class="reason">{{ member.rejectionReason or '-' }}</dd></div>
       </dl>
+    </section>
+
+    <section class="card">
+      <h3>حالة رقم الحساب</h3>
+      {% if member.tradingAccountNumber %}
+        {% if blocked_info %}
+        <div class="flash error" style="margin-bottom:10px; display:block;">
+          🔒 هذا الرقم محظور للتسجيل. سبب الحظر: {{ blocked_info.reason or '-' }}
+        </div>
+        <form class="note-form" style="border-top:none; padding-top:0;" method="post"
+              action="{{ url_for('unblock_account', block_id=blocked_info.id) }}">
+          <input type="hidden" name="next" value="{{ url_for('member_detail', user_id=member.telegramUserId) }}">
+          <button class="btn btn-outline" type="submit">إلغاء حظر الرقم</button>
+        </form>
+        {% else %}
+        <form class="note-form" style="border-top:none; padding-top:0;" method="post"
+              action="{{ url_for('block_account') }}">
+          <input type="hidden" name="account" value="{{ member.tradingAccountNumber }}">
+          <input type="hidden" name="next" value="{{ url_for('member_detail', user_id=member.telegramUserId) }}">
+          <label for="block_reason">سبب الحظر (اختياري)</label>
+          <input id="block_reason" name="reason" placeholder="مثال: رقم مشترك مع حساب آخر نشط">
+          <button class="btn btn-danger" type="submit"
+                  onclick="return confirm('حظر هذا الرقم ومنع تسجيله مستقبلاً في التحقق؟');">🔒 حظر هذا الرقم</button>
+        </form>
+        {% endif %}
+        {% if other_owners %}
+        <div style="margin-top:14px;">
+          <strong>🚨 الرقم مسجل أيضاً عند:</strong>
+          <ul style="margin:8px 0 0; padding:0; list-style:none; display:flex; flex-direction:column; gap:6px;">
+            {% for o in other_owners %}
+            <li style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+              <a class="btn btn-sm btn-outline" href="{{ url_for('member_detail', user_id=o.telegramUserId) }}">
+                {{ o.telegramName or ('@' + o.telegramUsername if o.telegramUsername else o.telegramUserId) }}
+              </a>
+              <span class="status" style="--c: {{ STATUS_COLORS[o.status] }}">{{ STATUS_LABELS[o.status] }}</span>
+              {% if o.inGroup == 1 %}<span class="chip chip-ok">بالقناة</span>
+              {% elif o.inGroup == 0 %}<span class="chip chip-bad">خارجها</span>
+              {% else %}<span class="chip chip-neutral">غير محدد</span>{% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+          {% if not other_active %}
+          <p class="settings-hint" style="margin-top:8px;">جميعهم سابقون (منتهيون/مُزالون) — قد يكون إعادة دخول بعد انتهاء الاشتراك.</p>
+          {% endif %}
+        </div>
+        {% endif %}
+      {% else %}
+      <div class="empty">
+        <div class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 9.5h8M8 14h5"/></svg></div>
+        <b>لا يوجد رقم حساب مسجل لهذا العضو</b>
+        <small>أضف رقم الحساب من نموذج التعديل بالأسفل.</small>
+      </div>
+      {% endif %}
     </section>
 
     <section class="card">
@@ -152,7 +205,7 @@
       {% endif %}
     </section>
   </aside>
-</main>
+</div>
 
 {% if member.balanceImageUrl %}
 <section class="card">

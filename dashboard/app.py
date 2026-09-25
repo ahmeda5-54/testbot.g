@@ -2,6 +2,7 @@ import csv
 import io
 import json
 import os
+import secrets
 import subprocess
 import sys
 import threading
@@ -25,7 +26,7 @@ from flask import (
 
 import config
 import db
-from bot import bridge, texts
+from bot import bridge, license as license_mod, texts
 
 app = Flask(__name__)
 app.secret_key = config.SECRET_KEY
@@ -53,11 +54,8 @@ STATUS_COLORS = {
 }
 
 TABS = [
-    ("all", "كل المشتركين"),
-    ("roster", "أعضاء المجموعة (كامل)"),
-    ("incomplete", "غير مكتملين بالمجموعة"),
-    ("submitted", "الطلبات الجديدة"),
-    ("under_review", "قيد المراجعة"),
+    ("all", "الكل"),
+    ("pending_decision", "بانتظار القرار"),
     ("verified", "المقبولون"),
     ("rejected", "المرفوضون"),
     ("expired", "انتهت مهلتهم"),
@@ -66,10 +64,7 @@ TABS = [
 
 TAB_FILTERS = {
     "all": None,
-    "roster": "__roster__",
-    "incomplete": "__incomplete__",
-    "submitted": db.SUBMITTED,
-    "under_review": db.UNDER_REVIEW,
+    "pending_decision": "__pending__",
     "verified": db.VERIFIED,
     "rejected": db.REJECTED,
     "expired": db.EXPIRED,
@@ -77,15 +72,39 @@ TAB_FILTERS = {
 }
 
 
+# كاش قصير لقيم الشريط الجانبي (شارات الدعم/المكرر) — كانت تُحسب في كل صفحة
+_globals_cache: dict = {"ts": 0.0, "vals": None}
+
+
 @app.context_processor
 def inject_globals():
+    if not _time_cache_valid(_globals_cache, 5):
+        counts = db.count_members()
+        pending_count = (
+            counts.get(db.SUBMITTED, 0)
+            + counts.get(db.UNDER_REVIEW, 0)
+            + counts.get(db.EXPIRED, 0)
+            + db.count_support(status="new")
+        )
+        _globals_cache["vals"] = {
+            "bot_online": db.get_setting("bot_online", "0") == "1",
+            "bot_last_seen": db.get_setting("bot_last_seen", ""),
+            "support_new": db.count_support(status="new"),
+            "dupe_count": len(db.find_duplicate_accounts()),
+            "pending_count": pending_count,
+        }
+        _globals_cache["ts"] = time.monotonic()
+    vals = _globals_cache["vals"]
     return {
         "STATUS_LABELS": STATUS_LABELS,
         "STATUS_COLORS": STATUS_COLORS,
         "fmt": fmt_dt,
-        "bot_online": db.get_setting("bot_online", "0") == "1",
-        "bot_last_seen": fmt_dt(db.get_setting("bot_last_seen", "")),
-        "support_new": db.count_support(status="new"),
+        "bot_online": vals["bot_online"],
+        "bot_last_seen": fmt_dt(vals["bot_last_seen"]),
+        "support_new": vals["support_new"],
+        "dupe_count": vals["dupe_count"],
+        "pending_count": vals["pending_count"],
+        "license_state": license_mod.state(),
     }
 
 
@@ -111,9 +130,36 @@ def login_required(f):
     return wrapper
 
 
+def _log_admin_action(action: str, detail: str = "") -> None:
+    """يسجل إجراءً قام به الأدمن من اللوحة (باسمه المختزن في الجلسة)."""
+    admin = session.get("admin_name") or "أدمن"
+    db.add_admin_action(action, detail[:1000], admin)
+
+
 @app.route("/healthz")
 def healthz():
     return "ok"
+
+
+@app.before_request
+def _setup_guard():
+    """شاشات الدخول التسلسلية قبل فتح اللوحة:
+    1) الترخيص (نسخة تجريبية/دائمة + كود تفعيل) إن كان مفروضاً عند البائع
+    2) معالج الإعداد الأول (وضع المفاتيح الخاصة) إن لم يكن النظام مكوّناً."""
+    if request.endpoint in (
+        "static",
+        "healthz",
+        "setup_page",
+        "login",
+        "logout",
+        "activate",
+    ):
+        return None
+    if config.license_enforced() and not license_mod.is_valid():
+        return redirect(url_for("activate"))
+    if not config.is_configured():
+        return redirect(url_for("setup_page"))
+    return None
 
 
 def _client_ip() -> str:
@@ -133,6 +179,9 @@ def login():
         password_ok = request.form.get("password", "") == config.DASHBOARD_PASSWORD
         if password_ok:
             session["admin"] = True
+            session["admin_name"] = (
+                request.form.get("admin_name", "").strip()[:60] or "أدمن"
+            )
             db.add_access_log(
                 "login_success", "تسجيل دخول ناجح", _client_ip(), _user_agent()
             )
@@ -145,12 +194,296 @@ def login():
     return render_template("login.html")
 
 
+# ── معالج الإعداد الأول (بيع نسخة: كل مشترٍ يضع مفاتيحه من المتصفح) ──
+
+
+def _setup_merged_values() -> dict:
+    """قيم الحقول المعروضة: ما خُزن في DB إن وُجد، وإلا قيمة البيئة."""
+    values = {}
+    for key in config.ENV_CONFIG_KEYS:
+        values[key] = db.get_setting("env:" + key, "") or os.getenv(key, "") or ""
+    return values
+
+
+@app.route("/setup", methods=["GET", "POST"])
+def setup_page():
+    # مفتوح عند أول تشغيل (غير مهيأ)؛ وبعد التهيئة يتطلب دخول أدمن لتعديله
+    if config.is_configured() and not session.get("admin"):
+        return redirect(url_for("login", next=url_for("setup_page")))
+    if request.method == "POST":
+        return _setup_apply()
+    return render_template(
+        "setup.html",
+        values=_setup_merged_values(),
+        configured=config.is_configured(),
+    )
+
+
+def _setup_apply():
+    password = request.form.get("dashboard_password", "").strip()
+    bot_token = request.form.get("bot_token", "").strip()
+    bot_username = request.form.get("bot_username", "").strip().lstrip("@")
+    channel_raw = request.form.get("channel_id", "").strip()
+    admin_raw = request.form.get("admin_ids", "").strip()
+    deadline_raw = request.form.get("deadline_hours", "").strip()
+    proxy_raw = request.form.get("proxy_url", "").strip()
+    support_token = request.form.get("support_bot_token", "").strip()
+    support_username = request.form.get("support_bot_username", "").strip().lstrip("@")
+    support_mode = request.form.get("support_mode", "inline").strip().lower()
+    if support_mode not in ("inline", "dedicated"):
+        support_mode = "inline"
+
+    errors = []
+    if not bot_token:
+        errors.append("توكن البوت مطلوب (أنشئه من @BotFather).")
+    if not channel_raw.lstrip("-").isdigit() or int(channel_raw) == 0:
+        errors.append("معرف القناة/المجموعة يجب أن يكون رقماً صحيحاً.")
+    admins: list[str] = []
+    for part in admin_raw.replace(";", ",").split(","):
+        part = part.strip()
+        if part and part.lstrip("-").isdigit():
+            admins.append(part)
+    if not admins:
+        errors.append("أدخل معرفاً واحداً صحيحاً للأدمن على الأقل.")
+    try:
+        deadline = int(deadline_raw)
+        if deadline <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        errors.append("مهلة التحقق يجب أن تكون عدداً موجباً (ساعات).")
+    if not config.is_configured() and not password:
+        errors.append("أنشئ كلمة مرور للوحة التحكم أولاً.")
+
+    if errors:
+        for msg in errors:
+            flash(msg, "error")
+        return (
+            render_template(
+                "setup.html",
+                values=_setup_merged_values(),
+                configured=config.is_configured(),
+            ),
+            200,
+        )
+
+    updates = {
+        "BOT_TOKEN": bot_token,
+        "BOT_USERNAME": bot_username,
+        "CHANNEL_ID": channel_raw,
+        "ADMIN_IDS": ",".join(admins),
+        "DEADLINE_HOURS": str(deadline),
+        "PROXY_URL": proxy_raw,
+        "SUPPORT_BOT_TOKEN": support_token,
+        "SUPPORT_BOT_USERNAME": support_username,
+        "SUPPORT_MODE": support_mode,
+    }
+    if password:
+        updates["DASHBOARD_PASSWORD"] = password
+    current_secret = db.get_setting("env:SECRET_KEY", "") or os.getenv("SECRET_KEY", "")
+    if not current_secret or current_secret == "dev-secret":
+        updates["SECRET_KEY"] = secrets.token_hex(32)
+
+    # DB = مصدر الحقيقة (يبقى عند إعادة النشر) + .env كتابة مساعدة للمحلي
+    for key, value in updates.items():
+        db.set_setting("env:" + key, value)
+    _write_env(updates)
+    config.apply_db_overrides()
+
+    db.add_access_log("setup", "اكتمل معالج الإعداد الأول", _client_ip(), _user_agent())
+    _request_bot_restart()
+    return render_template(
+        "restarting.html",
+        message="تم حفظ مفاتيحك — جارٍ إعادة تشغيل البوت ليعمل بإعداداتك الجديدة...",
+    )
+
+
+# ── الترخيص: نسخة تجريبية / دائمة + كود التفعيل ──────────────
+
+
+def _license_status_text(st: dict) -> str:
+    if config.license_enforced() and st["owner"]:
+        return "وضع المالك — بلا قيود."
+    if not st["valid"] and st["kind"]:
+        return "انتهت صلاحية النسخة — أدخل كوداً جديداً لاستئناف العمل."
+    if not st["valid"]:
+        return "لم تُفعَّل النسخة بعد."
+    if st["trial"]:
+        days = st["remaining_days"]
+        cap = st["max_members"]
+        day_text = f"{days:.1f} يوم" if days is not None else "بلا مهلة"
+        return f"نشطة (تجريبية) — متبقٍ {day_text}، سقف الأعضاء {cap}."
+    cap = st["max_members"]
+    cap_text = f"، سقف الأعضاء {cap}" if cap else ""
+    who = f" — {st['customer']}" if st["customer"] else ""
+    return f"مرخّصة (دائمة){who}{cap_text}."
+
+
+@app.route("/activate", methods=["GET", "POST"])
+def activate():
+    if not config.license_enforced():
+        return redirect(url_for("index"))
+    st = license_mod.state()
+
+    if request.method == "POST":
+        kind = request.form.get("kind", "").strip().lower()
+        code = request.form.get("code", "").strip()
+        if kind not in ("trial", "permanent"):
+            flash("اختر نوع النسخة (تجريبية أو دائمة) أولاً.", "error")
+        elif not code:
+            flash("أدخل كود التفعيل الذي سلّمه لك البائع.", "error")
+        else:
+            info = license_mod.validate(code, config.LICENSE_SECRET)
+            if info is None:
+                flash("الكود غير صالح أو منتهي الصلاحية.", "error")
+            elif info["kind"] != kind:
+                flash("هذا الكود غير صالح للنوع الذي اخترته — تأكد من نوع النسخة.", "error")
+            else:
+                ok, msg = license_mod.apply_code(code)
+                flash(msg, "success" if ok else "error")
+                db.add_access_log(
+                    "activate", f"تفعيل نسخة {kind}", _client_ip(), _user_agent()
+                )
+                if not config.is_configured():
+                    return redirect(url_for("setup_page"))
+                return redirect(url_for("index"))
+        st = license_mod.state()
+
+    return render_template(
+        "activate.html",
+        license_state=st,
+        license_status=_license_status_text(st),
+    )
+
+
+@app.post("/reset-store")
+@login_required
+def reset_store():
+    """مسح كل بيانات النظام استعداداً لعميل جديد (بيع جديد بنفس الرابط)."""
+    db.reset_all_data()
+    _request_bot_restart()
+    session.clear()
+    return redirect(url_for("activate"))
+
+
 @app.route("/logout")
 def logout():
     if session.get("admin"):
         db.add_access_log("logout", "تسجيل خروج", _client_ip(), _user_agent())
     session.clear()
     return redirect(url_for("login"))
+
+
+def _owners_status(owners: list) -> str:
+    active = [
+        o
+        for o in owners
+        if o.get("status") in ("VERIFIED", "SUBMITTED", "UNDER_REVIEW", "PENDING")
+    ]
+    return "active" if active else "past"
+
+
+def _iso_key(value: str) -> float:
+    """مفتاح ترتيب زمني تنازلي — ISO نصي، يُحسب بالثواني للفرز فقط."""
+    if not value:
+        return 0.0
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _pending_member_meta(m: dict) -> str:
+    acc = (m.get("tradingAccountNumber") or "").strip()
+    parts = []
+    if acc:
+        parts.append(f"رقم الحساب: {acc}")
+    if m.get("brokerName"):
+        parts.append(f"الوسيط: {m['brokerName']}")
+    if m.get("inGroup") == 1:
+        parts.append("بالقناة")
+    elif m.get("inGroup") == 0:
+        parts.append("خارج القناة")
+    deadline = fmt_dt(m.get("deadlineAt"))
+    if deadline != "-" and m["status"] != db.REMOVED:
+        parts.append(f"الموعد: {deadline}")
+    return " · ".join(parts) if parts else "—"
+
+
+@app.route("/pending")
+@login_required
+def pending_queue():
+    """قائمة انتظار موحّدة «بانتظارك»: كل ما يحتاج قراراً في شاشة واحدة —
+    طلبات التحقق (جديدة/قيد المراجعة/منتهية المهلة) + رسائل الدعم الجديدة."""
+    urgent_only = request.args.get("urgent") == "1"
+    members = db.get_members_by_statuses([db.SUBMITTED, db.UNDER_REVIEW, db.EXPIRED])
+    support_msgs, _total = db.get_support_messages(status="new", per_page=100)
+
+    items: list[dict] = []
+    for m in members:
+        st = m["status"]
+        items.append(
+            {
+                "kind": "member",
+                "uid": m["telegramUserId"],
+                "status": st,
+                "label": STATUS_LABELS[st],
+                "color": STATUS_COLORS[st],
+                "urgent": st in (db.UNDER_REVIEW, db.EXPIRED),
+                "title": (
+                    m.get("telegramName")
+                    or (
+                        f"@{m['telegramUsername']}"
+                        if m.get("telegramUsername")
+                        else str(m["telegramUserId"])
+                    )
+                ),
+                "meta": _pending_member_meta(m),
+                "time_key": m.get("submittedAt") or m.get("createdAt") or m.get("deadlineAt") or "",
+            }
+        )
+    for s in support_msgs:
+        items.append(
+            {
+                "kind": "support",
+                "uid": s["telegramUserId"],
+                "status": "new",
+                "label": "رسالة دعم",
+                "color": "#3b82f6",
+                "urgent": s.get("priority") == 1,
+                "title": (
+                    s.get("telegramName")
+                    or (
+                        f"@{s['telegramUsername']}"
+                        if s.get("telegramUsername")
+                        else str(s["telegramUserId"])
+                    )
+                ),
+                "meta": (s.get("message") or "")[:160],
+                "msg_id": s["id"],
+                "time_key": s.get("createdAt") or "",
+            }
+        )
+
+    total_counts = {
+        "submitted": sum(1 for m in members if m["status"] == db.SUBMITTED),
+        "under_review": sum(1 for m in members if m["status"] == db.UNDER_REVIEW),
+        "expired": sum(1 for m in members if m["status"] == db.EXPIRED),
+        "support": len(support_msgs),
+    }
+    total_counts["members"] = (
+        total_counts["submitted"] + total_counts["under_review"] + total_counts["expired"]
+    )
+    total_counts["all"] = total_counts["members"] + total_counts["support"]
+
+    if urgent_only:
+        items = [i for i in items if i["urgent"]]
+    items.sort(key=lambda i: (0 if i["urgent"] else 1, -_iso_key(i["time_key"])))
+    return render_template(
+        "pending.html",
+        items=items,
+        total_counts=total_counts,
+        urgent_only=urgent_only,
+    )
 
 
 @app.route("/")
@@ -160,19 +493,35 @@ def index():
     if tab not in TAB_FILTERS:
         tab = "all"
     filter_status = TAB_FILTERS[tab]
-    if filter_status == "__incomplete__":
-        members = db.get_members_incomplete()
-    elif filter_status == "__roster__":
-        members = db.get_members(None)
+    if filter_status == "__pending__":
+        members = [
+            m
+            for m in db.get_members(None)
+            if m["status"] in (db.SUBMITTED, db.UNDER_REVIEW)
+        ]
     else:
         members = db.get_members(filter_status)
     counts = db.count_members()
+    counts["pending_decision"] = counts.get(
+        db.SUBMITTED, 0
+    ) + counts.get(db.UNDER_REVIEW, 0)
+
+    dupe_norms: dict[str, list] = {}
+    for g in db.find_duplicate_accounts():
+        dupe_norms[db.norm_account(g["account"])] = g["owners"]
+    blocked_norms = {b["account_norm"] for b in db.get_blocked_accounts()}
+    for m in members:
+        acc = (m.get("tradingAccountNumber") or "").strip()
+        norm = db.norm_account(acc)
+        m["_blocked"] = bool(acc and norm in blocked_norms)
+        owners = dupe_norms.get(norm) if acc else None
+        if owners:
+            m["_dupe"] = _owners_status(owners)
+            m["_dupe_count"] = len(owners)
 
     member_count = bridge.get_member_count()
     in_group = db.count_in_group()
     incomplete = len(db.get_members_incomplete())
-    counts["incomplete"] = incomplete
-    counts["roster"] = counts["ALL"]
     stats = {
         "group_total": member_count,
         "in_group": in_group,
@@ -365,6 +714,121 @@ def settings_page():
     return _render_settings()
 
 
+@app.post("/settings/automation")
+@login_required
+def save_automation_settings():
+    """يحفظ إعدادات الأوتوماتيك (تذكير + إزالة) في قاعدة البيانات فقط —
+    الحلقات تقرأها كل دورة فلا حاجة لإعادة تشغيل."""
+    def clamp_num(raw, default=0, floor=0, cap=8760):
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = default
+        return max(floor, min(cap, value))
+
+    reminder_enabled = "1" if request.form.get("reminder_enabled") else "0"
+    auto_remove_expired = "1" if request.form.get("auto_remove_expired") else "0"
+    auto_remove_rejected = "1" if request.form.get("auto_remove_rejected") else "0"
+    settings = {
+        "reminder_enabled": reminder_enabled,
+        "reminder_hours_1": str(clamp_num(request.form.get("reminder_hours_1"), 6)),
+        "reminder_hours_2": str(clamp_num(request.form.get("reminder_hours_2"), 1)),
+        "auto_remove_expired": auto_remove_expired,
+        "auto_remove_rejected": auto_remove_rejected,
+        "auto_remove_grace_hours": str(clamp_num(request.form.get("auto_remove_grace_hours"), 0)),
+    }
+    for key, value in settings.items():
+        db.set_setting(key, value)
+    flash("تم حفظ إعدادات الأوتوماتيك.", "success")
+    return redirect(url_for("settings_page", _anchor="automation"))
+
+
+@app.post("/faq/add")
+@login_required
+def faq_add():
+    keywords = request.form.get("faq_keywords", "").strip()
+    reply = request.form.get("faq_reply", "").strip()
+    if not keywords or not reply:
+        flash("أدخل كلمات مفتاحية ونص الرد معاً.", "error")
+        return redirect(url_for("settings_page", _anchor="faq"))
+    db.add_faq_rule(keywords, reply)
+    _log_admin_action("إضافة رد تلقائي (FAQ)", f"كلمات: {keywords}")
+    flash("تمت إضافة الرد التلقائي.", "success")
+    return redirect(url_for("settings_page", _anchor="faq"))
+
+
+@app.post("/faq/delete/<int:rule_id>")
+@login_required
+def faq_delete(rule_id: int):
+    if db.delete_faq_rule(rule_id):
+        _log_admin_action("حذف رد تلقائي (FAQ)", f"القاعدة #{rule_id}")
+        flash("حُذف الرد التلقائي.", "success")
+    else:
+        flash("لم يُعثر على الرد المطلوب.", "error")
+    return redirect(url_for("settings_page", _anchor="faq"))
+
+
+@app.post("/clone/add")
+@login_required
+def clone_add():
+    username = request.form.get("clone_username", "").strip()
+    if not username:
+        flash("أدخل يوزرنيم القناة المراد مراقبتها.", "error")
+        return redirect(url_for("settings_page", _anchor="clones"))
+    watch = db.add_clone_watch(username)
+    if watch is None:
+        flash("يوزرنيم غير صالح (4-32 حرفاً: أحرف وأرقام و _).", "error")
+        return redirect(url_for("settings_page", _anchor="clones"))
+    flash(f"أُضيف @{watch['username']} للمراقبة — سيُفحص في الدورة القادمة أو زر «فحص الآن».", "success")
+    return redirect(url_for("settings_page", _anchor="clones"))
+
+
+@app.post("/clone/delete/<int:watch_id>")
+@login_required
+def clone_delete(watch_id: int):
+    if db.remove_clone_watch(watch_id):
+        flash("أُزيلت القناة من المراقبة.", "success")
+    else:
+        flash("لم يُعثر على القناة المطلوبة.", "error")
+    return redirect(url_for("settings_page", _anchor="clones"))
+
+
+@app.post("/clone/scan")
+@login_required
+def clone_scan_now():
+    try:
+        config.CLONE_SCAN_FLAG.touch()
+    except OSError:
+        flash("تعذر تفعيل الفحص الآن.", "error")
+        return redirect(url_for("settings_page", _anchor="clones"))
+    flash("بدأ الفحص الفوري — خلال دقيقة ستكتمل النتيجة وتظهر التنبيهات أدناه.", "success")
+    return redirect(url_for("settings_page", _anchor="clones"))
+
+
+@app.post("/clone/config")
+@login_required
+def clone_config():
+    try:
+        hours = int(request.form.get("clone_check_hours", "4"))
+    except ValueError:
+        hours = 4
+    hours = max(0, min(168, hours))
+    db.set_setting("clone_check_hours", str(hours))
+    flash("حُفظ فترة الفحص.", "success")
+    return redirect(url_for("settings_page", _anchor="clones"))
+
+
+@app.post("/clone/alert/<int:alert_id>/<string:status>")
+@login_required
+def clone_alert_status(alert_id: int, status: str):
+    if db.resolve_clone_alert(alert_id, status):
+        labels = {"confirmed": "أُكِّد كقناة مقلّدة", "ignored": "تُجاهل (ليست مقلّدة)", "resolved": "حُسم التنبيه"}
+        flash(labels.get(status, "تم التحديث.") + ".", "success")
+    else:
+        flash("تعذر تحديث التنبيه.", "error")
+    return redirect(url_for("settings_page", _anchor="clones"))
+
+
 @app.post("/settings/userbot")
 @login_required
 def save_userbot_settings():
@@ -383,6 +847,7 @@ def save_userbot_settings():
             "TB_SESSION_NAME": session_name,
         }
     )
+    _invalidate_session_cache()
     if not (api_id and api_hash and phone):
         flash("تم حفظ بيانات UserBot.", "success")
         return redirect(url_for("settings_page"))
@@ -509,6 +974,7 @@ def run_userbot_login():
             ),
             "",
         )
+        _invalidate_session_cache()
         flash(
             "تم تسجيل الدخول بنجاح." + (f"\n{identity}" if identity else ""),
             "success",
@@ -518,6 +984,7 @@ def run_userbot_login():
             (config.TB_SESSION_DIR / (session_name + ".session")).unlink()
         except OSError:
             pass
+        _invalidate_session_cache()
         low = output.lower()
         if "two-step" in low or "password" in low and "code" not in low:
             flash(
@@ -603,24 +1070,57 @@ def list_userbot_groups():
     return _render_settings(groups_list=groups)
 
 
+def _time_cache_valid(cache: dict, ttl: float) -> bool:
+    """true إذا كان الكاش حديثاً خلال ttl ثانية."""
+    return cache.get("ts", 0) and (time.monotonic() - cache["ts"]) < ttl
+
+
+# ذاكرة مؤقتة لفحص جلسة الـ UserBot — تشغيل subprocess في كل فتح لإعدادات كان
+# هو سبب بطء الصفحة (يصل أحياناً لثوانٍ انتظار). نُعيد الفحص كل 90 ثانية فقط.
+_session_auth_cache: dict = {"ts": 0.0, "ok": False}
+
+
 def _session_authorized() -> bool:
     env = _read_env()
     session_name = env.get("TB_SESSION_NAME") or config.TB_SESSION_NAME
-    if not (config.TB_SESSION_DIR / (session_name + ".session")).exists():
+    session_dir = config.TB_SESSION_DIR / (session_name + ".session")
+    if not session_dir.exists():
         return False
+    # لدينا نتيجة حديثة → نُرجعها فوراً بلا subprocess
+    if _time_cache_valid(_session_auth_cache, 90):
+        return _session_auth_cache["ok"]
+    # أول فحص بعد الإقلاع: لا نُعيق تحميل الصفحة — نُظهر الصفحة فوراً
+    # (وجود ملف الجلسة يعني دخولاً سابقاً) ونُحدّث النتيجة في الخلفية.
+    threading.Thread(
+        target=_refresh_session_authorized,
+        args=(session_name,),
+        daemon=True,
+    ).start()
+    return True
+
+
+def _refresh_session_authorized(session_name: str = "") -> None:
+    """فحص فعلي لجلسة UserBot في خيط خلفي وتخزين النتيجة (لا يبطئ اللوحة)."""
     try:
         proc = subprocess.run(
             [sys.executable, "userbot_sync.py", "--check-session"],
             cwd=str(config.BASE_DIR),
             capture_output=True,
             text=True,
-            timeout=90,
+            timeout=30,
             encoding="utf-8",
             errors="replace",
         )
-        return "authorized=1" in (proc.stdout or "")
+        _session_auth_cache.update(
+            ts=time.monotonic(), ok="authorized=1" in (proc.stdout or "")
+        )
     except Exception:
-        return False
+        if not _time_cache_valid(_session_auth_cache, 90):
+            _session_auth_cache.update(ts=time.monotonic(), ok=False)
+
+
+def _invalidate_session_cache() -> None:
+    _session_auth_cache["ts"] = 0.0
 
 
 def _invite_seconds(value: str, unit: str) -> int:
@@ -694,6 +1194,17 @@ def _render_settings(**extra):
         "custom_text": custom_text,
         "base_dir": str(config.BASE_DIR),
         "support_mode": getattr(config, "SUPPORT_MODE", "inline"),
+        "counts": db.count_members(),
+        "members": db.get_members_brief(500),
+        "broadcasts": db.get_last_broadcasts(10),
+        "access_logs": db.get_access_logs(50),
+        "access_counts": db.count_access_logs(),
+        "admin_actions": db.get_admin_actions(200),
+        "admin_action_counts": db.count_admin_actions(),
+        "faq_rules": db.get_faq_rules(),
+        "clone_watch": db.list_clone_watch(),
+        "clone_alerts": db.list_clone_alerts(),
+        "clone_check_hours": db.get_setting("clone_check_hours", "4"),
     }
     ctx.update(extra)
     return render_template("settings.html", **ctx)
@@ -703,6 +1214,7 @@ def _render_settings(**extra):
 @login_required
 def post_message():
     ok, _message_id, error, info = bridge.post_verify_message()
+    _log_admin_action("نشر رسالة القناة", f"ok={ok} id={_message_id} info={info}")
     if ok:
         parts = []
         if error:
@@ -730,7 +1242,72 @@ def member_detail(user_id: int):
             reviewedAt=db.now_iso(),
         )
         member = db.get_member(user_id)
-    return render_template("member.html", member=member)
+    other_owners: list[dict] = []
+    other_active = False
+    blocked_info = None
+    if member.get("tradingAccountNumber"):
+        other_owners = db.account_owners(
+            member["tradingAccountNumber"], exclude=user_id
+        )
+        other_active = any(
+            o["status"] in ("VERIFIED", "SUBMITTED", "UNDER_REVIEW", "PENDING")
+            for o in other_owners
+        )
+        blocked_info = db.is_account_blocked(member["tradingAccountNumber"])
+    return render_template(
+        "member.html",
+        member=member,
+        other_owners=other_owners,
+        other_active=other_active,
+        blocked_info=blocked_info,
+    )
+
+
+@app.route("/members/duplicates")
+@login_required
+def duplicates_page():
+    groups = db.find_duplicate_accounts()
+    for g in groups:
+        g["kind"] = _owners_status(g["owners"])
+    blocked = db.get_blocked_accounts()
+    return render_template(
+        "duplicates.html",
+        groups=groups,
+        blocked=blocked,
+        dupes_active=sum(1 for g in groups if g["kind"] == "active"),
+        dupes_past=sum(1 for g in groups if g["kind"] == "past"),
+    )
+
+
+@app.post("/members/block-account")
+@login_required
+def block_account():
+    account = request.form.get("account", "").strip()
+    nxt = request.form.get("next") or url_for("index")
+    if account:
+        reason = request.form.get("reason", "").strip()
+        db.block_account(account, reason)
+        db.add_access_log(
+            "block_account",
+            f"حظر رقم حساب {account}" + (f" — {reason}" if reason else ""),
+            _client_ip(),
+            _user_agent(),
+        )
+        flash("تم حظر الرقم. لن يُقبل في التحقق بعد الآن.", "success")
+    return redirect(nxt)
+
+
+@app.post("/members/unblock-account/<int:block_id>")
+@login_required
+def unblock_account(block_id: int):
+    nxt = request.form.get("next") or url_for("duplicates_page")
+    if db.unblock_account(block_id):
+        db.add_access_log(
+            "unblock_account", f"إلغاء حظر رقم (id={block_id})",
+            _client_ip(), _user_agent(),
+        )
+        flash("تم إلغاء الحظر عن الرقم.", "success")
+    return redirect(nxt)
 
 
 @app.route("/uploads/<path:filename>")
@@ -739,15 +1316,22 @@ def uploads(filename: str):
     return send_from_directory(config.UPLOADS_DIR, filename)
 
 
-@app.post("/member/<int:user_id>/approve")
-@login_required
-def approve(user_id: int):
+def _approve_member(user_id: int) -> dict:
+    """منطق قبول مشترك — مشترك بين زر اللوحة والقبول الجماعي.
+    يرجع {'status': 'inside'|'link'|'no_link'|'missing'}."""
     member = db.get_member(user_id)
     if member is None:
-        abort(404)
-    db.set_status(
-        user_id, db.VERIFIED, reviewedAt=db.now_iso(), rejectionReason=None
-    )
+        return {"status": "missing"}
+    from bot import texts as bot_texts
+
+    # إن كان العضو داخل القناة فعلاً فلن نرسل له رابط دخول — هو موجود أصلاً.
+    membership = bridge.check_member(user_id)
+    if membership is True:
+        db.set_status(
+            user_id, db.VERIFIED, reviewedAt=db.now_iso(), rejectionReason=None
+        )
+        bridge.notify_member_main(user_id, bot_texts.accepted_already_inside_message())
+        return {"status": "inside"}
     try:
         invite_seconds = _invite_seconds(
             db.get_setting("invite_link_value", "0"),
@@ -755,29 +1339,198 @@ def approve(user_id: int):
         )
     except ValueError:
         invite_seconds = 0
-    link = None
     try:
         link = bridge.get_invite_link(invite_seconds)
     except Exception:
         link = None
+    db.set_status(
+        user_id, db.VERIFIED, reviewedAt=db.now_iso(), rejectionReason=None
+    )
     if link:
-        from bot import texts as bot_texts
-
         bridge.notify_member_main(
             user_id, bot_texts.accepted_message(link, invite_seconds)
+        )
+        return {"status": "link", "seconds": invite_seconds}
+    bridge.notify_member_main(user_id, bot_texts.accepted_message(None, 0))
+    return {"status": "no_link"}
+
+
+def _request_user_ids() -> list[int]:
+    """يجمع معرّفات الأعضاء المحددين من حقل ids (نموذج متعدد أو نص مفصول بفواصل)."""
+    raw = request.form.getlist("ids")
+    out: list[int] = []
+    seen: set[int] = set()
+    for value in raw:
+        for part in str(value).split(","):
+            part = part.strip()
+            if part.lstrip("-").isdigit():
+                uid = int(part)
+                if uid not in seen:
+                    seen.add(uid)
+                    out.append(uid)
+    return out
+
+
+def _batch_back():
+    """العودة بعد إجراء جماعي: next صريح أو الصفحة السابقة أو لوحة التحكم."""
+    next_url = request.form.get("next") or request.referrer or url_for("index")
+    if next_url and next_url.startswith("/"):
+        return redirect(next_url)
+    return redirect(url_for("index"))
+
+
+def _batch_actionable(user_id: int) -> bool:
+    """هل العضو قابل للقبول/الرفض الجماعي؟ (يجب أن يكون بانتظار قرار)."""
+    member = db.get_member(user_id)
+    return member is not None and member["status"] in (db.SUBMITTED, db.UNDER_REVIEW)
+
+
+@app.post("/member/<int:user_id>/approve")
+@login_required
+def approve(user_id: int):
+    member = db.get_member(user_id)
+    if member is None:
+        abort(404)
+    result = _approve_member(user_id)
+    if result["status"] == "inside":
+        _log_admin_action(
+            "قبول مشترك",
+            f"uid={user_id} (داخل القناة أصلاً — بلا رابط)",
+        )
+        flash(
+            "تم قبول المشترك — وهو داخل القناة أصلاً، لم يُرسل رابط دخول.",
+            "success",
+        )
+    elif result["status"] == "link":
+        _log_admin_action(
+            "قبول مشترك",
+            f"uid={user_id} رابط مدة {result['seconds']} ثانية",
         )
         flash(
             "تم قبول المشترك مع إرسال رابط دخول المجموعة.",
             "success",
         )
     else:
-        bridge.notify_member_main(user_id, "تم قبول اشتراكك بنجاح ✅")
+        _log_admin_action("قبول مشترك", f"uid={user_id} (تعذّر توليد رابط)")
         flash(
             "تم قبول المشترك — لكن تعذر توليد رابط المجموعة "
             "(تأكد أن البوت أدمن وبصلاحية إنشاء روابط دعوة).",
             "success",
         )
-    return redirect(url_for("member_detail", user_id=user_id))
+    target = request.form.get("next") or url_for("member_detail", user_id=user_id)
+    return redirect(target)
+
+
+@app.post("/batch/approve")
+@login_required
+def batch_approve():
+    ids = _request_user_ids()
+    if not ids:
+        flash("لم تحدّد أي عضو.", "error")
+        return _batch_back()
+    done = inside_count = 0
+    skipped: list[int] = []
+    for uid in ids:
+        if not _batch_actionable(uid):
+            skipped.append(uid)
+            continue
+        result = _approve_member(uid)
+        if result["status"] == "inside":
+            inside_count += 1
+        done += 1
+    _log_admin_action(
+        "قبول جماعي",
+        f"{done} عضو من أصل {len(ids)} ({', '.join(map(str, ids[:30]))})",
+    )
+    parts = [f"تم قبول {done} عضو"]
+    if inside_count:
+        parts.append(f"({inside_count} منهم داخل القناة أصلاً)")
+    if skipped:
+        parts.append(f"تخطّى {len(skipped)} غير قابلين (يجب أن يكونوا بانتظار القرار)")
+    flash(" ".join(parts) + ".", "success")
+    return _batch_back()
+
+
+@app.post("/batch/reject")
+@login_required
+def batch_reject():
+    ids = _request_user_ids()
+    reason = request.form.get("reason", "").strip()
+    if not ids:
+        flash("لم تحدّد أي عضو.", "error")
+        return _batch_back()
+    if not reason:
+        flash("اكتب سبب الرفض الجماعي أولاً (يُرسل لجميع المحددين).", "error")
+        return _batch_back()
+    done = 0
+    skipped: list[int] = []
+    for uid in ids:
+        if not _batch_actionable(uid):
+            skipped.append(uid)
+            continue
+        db.set_status(
+            uid, db.REJECTED, reviewedAt=db.now_iso(), rejectionReason=reason
+        )
+        bridge.notify_member(uid, f"تم رفض طلب التحقق.\nالسبب: {reason}")
+        done += 1
+    _log_admin_action(
+        "رفض جماعي",
+        f"{done} عضو السبب: {reason[:200]} ({', '.join(map(str, ids[:30]))})",
+    )
+    parts = [f"تم رفض {done} عضو وإبلاغهم بالسبب."]
+    if skipped:
+        parts.append(f"تخطّى {len(skipped)} غير قابلين.")
+    flash(" ".join(parts), "success")
+    return _batch_back()
+
+
+@app.post("/batch/remove")
+@login_required
+def batch_remove():
+    ids = _request_user_ids()
+    if not ids:
+        flash("لم تحدّد أي عضو.", "error")
+        return _batch_back()
+    removed = bridge.kick_members(ids)
+    if removed < 0:
+        flash("فشل تنفيذ الإزالة الجماعية (البوت غير متصل؟).", "error")
+    else:
+        _log_admin_action(
+            "إزالة جماعية من القناة", f"{removed} عضو ({', '.join(map(str, ids[:30]))})"
+        )
+        flash(f"تمت إزالة {removed} عضو من القناة.", "success")
+    return _batch_back()
+
+
+@app.post("/batch/delete")
+@login_required
+def batch_delete():
+    ids = _request_user_ids()
+    if not ids:
+        flash("لم تحدّد أي عضو.", "error")
+        return _batch_back()
+    deleted = 0
+    for uid in ids:
+        member = db.get_member(uid)
+        if member is None:
+            continue
+        if member.get("balanceImageUrl"):
+            path = config.UPLOADS_DIR / member["balanceImageUrl"]
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        db.delete_member(uid)
+        deleted += 1
+    _log_admin_action(
+        "حذف جماعي للسجلات", f"{deleted} عضو ({', '.join(map(str, ids[:30]))})"
+    )
+    flash(
+        f"حُذف {deleted} سجل نهائياً — يبقى العضو في المجموعة إن كان موجوداً، "
+        "ويعيد /start ليبدأ من جديد.",
+        "success",
+    )
+    return _batch_back()
 
 
 @app.post("/member/<int:user_id>/reject")
@@ -799,8 +1552,10 @@ def reject(user_id: int):
     bridge.notify_member(
         user_id, f"تم رفض طلب التحقق.\nالسبب: {reason}"
     )
+    _log_admin_action("رفض مشترك", f"uid={user_id} السبب: {reason}")
     flash("تم رفض المشترك.", "success")
-    return redirect(url_for("member_detail", user_id=user_id))
+    target = request.form.get("next") or url_for("member_detail", user_id=user_id)
+    return redirect(target)
 
 
 @app.post("/member/<int:user_id>/request-photo")
@@ -810,6 +1565,7 @@ def request_photo(user_id: int):
     if member is None:
         abort(404)
     bridge.request_new_photo(user_id, "الرجاء إرسال صورة جديدة للرصيد أو Equity.")
+    _log_admin_action("طلب صورة جديدة", f"uid={user_id}")
     flash("تم إرسال طلب صورة جديدة للمشترك.", "success")
     return redirect(url_for("member_detail", user_id=user_id))
 
@@ -826,8 +1582,10 @@ def extend(user_id: int):
     bridge.notify_member(
         user_id, f"تم تمديد مهلة التحقق {config.DEADLINE_HOURS} ساعة."
     )
+    _log_admin_action("تمديد مهلة", f"uid={user_id}")
     flash("تم تمديد المهلة.", "success")
-    return redirect(url_for("member_detail", user_id=user_id))
+    target = request.form.get("next") or url_for("member_detail", user_id=user_id)
+    return redirect(target)
 
 
 @app.post("/member/<int:user_id>/start-review")
@@ -838,6 +1596,7 @@ def start_review(user_id: int):
         abort(404)
     if member["status"] == db.SUBMITTED:
         db.set_status(user_id, db.UNDER_REVIEW, reviewedAt=db.now_iso())
+        _log_admin_action("بدء مراجعة", f"uid={user_id}")
         flash("تم بدء المراجعة.", "success")
     return redirect(url_for("member_detail", user_id=user_id))
 
@@ -849,6 +1608,7 @@ def save_note(user_id: int):
     if member is None:
         abort(404)
     db.upsert_member(user_id, adminNote=request.form.get("note", "").strip())
+    _log_admin_action("حفظ ملاحظة عضو", f"uid={user_id}")
     flash("تم حفظ الملاحظة.", "success")
     return redirect(url_for("member_detail", user_id=user_id))
 
@@ -862,6 +1622,7 @@ def remove_from_chat(user_id: int):
     ok, error = bridge.remove_member(user_id)
     if ok:
         db.set_status(user_id, db.REMOVED)
+        _log_admin_action("حذف من المجموعة", f"uid={user_id}")
         flash("تم حذف العضو من المجموعة.", "success")
     else:
         flash(f"فشل حذف العضو من المجموعة: {error}", "error")
@@ -882,6 +1643,7 @@ def delete_record(user_id: int):
         except OSError:
             pass
     db.delete_member(user_id)
+    _log_admin_action("حذف سجل عضو نهائياً", f"uid={user_id}")
     flash("تم حذف السجل نهائياً — يمكن للمشترك البدء من جديد.", "success")
     return redirect(url_for("index"))
 
@@ -889,17 +1651,7 @@ def delete_record(user_id: int):
 @app.route("/notifications")
 @login_required
 def notifications():
-    counts = db.count_members()
-    for key in STATUS_LABELS:
-        counts.setdefault(key, 0)
-    members = db.get_members(None)
-    return render_template(
-        "notifications.html",
-        total=counts["ALL"],
-        counts=counts,
-        members=members,
-        broadcasts=db.get_last_broadcasts(10),
-    )
+    return redirect(url_for("settings_page", _anchor="broadcast"))
 
 
 @app.post("/broadcast")
@@ -913,20 +1665,21 @@ def broadcast():
         ext = Path(photo_file.filename).suffix.lower()
         if ext not in (".jpg", ".jpeg", ".png", ".webp"):
             flash("صيغة الصورة غير مدعومة (JPG/PNG/WebP فقط).", "error")
-            return redirect(url_for("notifications"))
+            return redirect(url_for("settings_page", _anchor="broadcast"))
         config.UPLOADS_DIR.mkdir(exist_ok=True)
         photo_path = config.UPLOADS_DIR / f"broadcast_{int(time.time())}{ext}"
         photo_file.save(photo_path)
     if not text and not photo_path:
         flash("اكتب نص الإشعار أو ارفع صورة أولاً.", "error")
-        return redirect(url_for("notifications"))
+        return redirect(url_for("settings_page", _anchor="broadcast"))
 
     # بث مباشر داخل القناة/المجموعة نفسها (منشور عام)
     if scope == "group":
         bridge.broadcast_group(text, str(photo_path) if photo_path else None)
         kind = "منشور عام مع صورة" if photo_path else "منشور عام"
+        _log_admin_action("بث في القناة", kind)
         flash(f"تم بدء نشر الـ{kind} داخل القناة في الخلفية.", "success")
-        return redirect(url_for("notifications"))
+        return redirect(url_for("settings_page", _anchor="broadcast"))
 
     # إرسال لعضو محدد واحد
     if scope == "single":
@@ -934,7 +1687,7 @@ def broadcast():
         selected = db.get_member(int(raw_id)) if raw_id.lstrip("-").isdigit() else None
         if selected is None:
             flash("اختر عضواً محدداً أولاً.", "error")
-            return redirect(url_for("notifications"))
+            return redirect(url_for("settings_page", _anchor="broadcast"))
         bridge.broadcast(
             text,
             [selected["telegramUserId"]],
@@ -942,8 +1695,11 @@ def broadcast():
             "single",
         )
         kind = "إشعار مع صورة" if photo_path else "إشعار"
+        _log_admin_action(
+            f"بث لعضو واحد", f"uid={selected['telegramUserId']} ({kind})"
+        )
         flash(f"تم بدء إرسال الـ{kind} إلى «{selected['telegramName'] or selected['telegramUserId']}».", "success")
-        return redirect(url_for("notifications"))
+        return redirect(url_for("settings_page", _anchor="broadcast"))
 
     if scope == "pending":
         members = db.get_members(db.NOT_STARTED) + db.get_members(db.PENDING)
@@ -963,30 +1719,118 @@ def broadcast():
     ids = [m["telegramUserId"] for m in members]
     if not ids:
         flash("لا يوجد مشتركون في هذا النطاق.", "error")
-        return redirect(url_for("notifications"))
+        return redirect(url_for("settings_page", _anchor="broadcast"))
     bridge.broadcast(text, ids, str(photo_path) if photo_path else None, scope)
     kind = "إشعار مع صورة" if photo_path else "إشعار"
+    _log_admin_action(f"بث لعضو واحد: {scope}", f"{len(ids)} مستهدف")
     flash(f"تم بدء إرسال الـ{kind} إلى {len(ids)} مشترك في الخلفية.", "success")
-    return redirect(url_for("notifications"))
+    return redirect(url_for("settings_page", _anchor="broadcast"))
+
+
+# ── جدولة النشر اليومي للقناة ──────────────────────────
+
+
+def _is_valid_hm(value: str) -> bool:
+    try:
+        hh, mm = value.split(":")
+        return 0 <= int(hh) <= 23 and 0 <= int(mm) <= 59
+    except (TypeError, ValueError):
+        return False
+
+
+@app.get("/posts")
+@login_required
+def posts_page():
+    posts = db.get_scheduled_posts()
+    return render_template("posts.html", posts=posts)
+
+
+@app.post("/posts/add")
+@login_required
+def posts_add():
+    title = request.form.get("title", "").strip()
+    body = request.form.get("body", "").strip()
+    post_time = request.form.get("post_time", "").strip()
+    raw_days = request.form.getlist("days")
+    pin = 1 if request.form.get("pin") else 0
+    photo_file = request.files.get("photo")
+
+    if not title:
+        flash("أدخل عنواناً للرسالة المجدولة.", "error")
+        return redirect(url_for("posts_page"))
+    if not _is_valid_hm(post_time):
+        flash("حدد وقتاً صالحاً بصيغة HH:MM.", "error")
+        return redirect(url_for("posts_page"))
+
+    days = "".join(sorted(set(d for d in raw_days if d in "0123456"))) or "0123456"
+
+    photo_name = None
+    if photo_file and photo_file.filename:
+        ext = Path(photo_file.filename).suffix.lower()
+        if ext not in (".jpg", ".jpeg", ".png", ".webp"):
+            flash("صيغة الصورة غير مدعومة (JPG/PNG/WebP فقط).", "error")
+            return redirect(url_for("posts_page"))
+        config.UPLOADS_DIR.mkdir(exist_ok=True)
+        photo_name = f"post_{int(time.time())}{ext}"
+        photo_file.save(config.UPLOADS_DIR / photo_name)
+
+    if not body and not photo_name:
+        flash("أضف نصاً أو صورة للرسالة المجدولة.", "error")
+        return redirect(url_for("posts_page"))
+
+    post = db.add_scheduled_post(
+        title=title, body=body, photo=photo_name,
+        time=post_time, days=days, pin=pin,
+    )
+    _log_admin_action("إضافة رسالة مجدولة", f"#{post['id']} {title} ({post_time})")
+    flash(f"أُضيفت الرسالة المجدولة «{title}» — ستُنشر عند حلول {post_time}.", "success")
+    return redirect(url_for("posts_page"))
+
+
+@app.post("/posts/<int:post_id>/toggle")
+@login_required
+def posts_toggle(post_id):
+    post = db.get_scheduled_post(post_id)
+    if post:
+        db.update_scheduled_post(
+            post_id, enabled=0 if post["enabled"] else 1
+        )
+        state = "تفعيل" if not post["enabled"] else "إيقاف"
+        _log_admin_action(f"{state} رسالة مجدولة", f"#{post_id} {post['title']}")
+    return redirect(url_for("posts_page"))
+
+
+@app.post("/posts/<int:post_id>/delete")
+@login_required
+def posts_delete(post_id):
+    post = db.get_scheduled_post(post_id)
+    if post:
+        db.delete_scheduled_post(post_id)
+        _log_admin_action("حذف رسالة مجدولة", f"#{post_id} {post['title']}")
+    return redirect(url_for("posts_page"))
+
+
+@app.post("/posts/<int:post_id>/send-now")
+@login_required
+def posts_send_now(post_id):
+    post = db.get_scheduled_post(post_id)
+    if not post:
+        flash("الرسالة غير موجودة.", "error")
+        return redirect(url_for("posts_page"))
+    ok, info = bridge.post_scheduled_now(post)
+    if ok:
+        db.mark_scheduled_post_sent(post_id, True, "نُشر يدوياً الآن")
+        _log_admin_action("نشر فوري لرسالة مجدولة", f"#{post_id} {post['title']}")
+        flash(f"تم نشر «{post['title']}» في القناة الآن" + (f" ({info})" if info else "") + ".", "success")
+    else:
+        flash(f"فشل نشر «{post['title']}»: {info}", "error")
+    return redirect(url_for("posts_page"))
 
 
 @app.route("/access")
 @login_required
 def access_logs_page():
-    action = request.args.get("action", "").strip()
-    try:
-        limit = max(20, min(500, int(request.args.get("limit", "100"))))
-    except ValueError:
-        limit = 100
-    logs = db.get_access_logs(limit, action or None)
-    counts = db.count_access_logs()
-    return render_template(
-        "access.html",
-        logs=logs,
-        counts=counts,
-        action=action,
-        limit=limit,
-    )
+    return redirect(url_for("settings_page", _anchor="access"))
 
 
 @app.post("/access/clear")
@@ -994,138 +1838,15 @@ def access_logs_page():
 def access_logs_clear():
     deleted = db.clear_access_logs()
     flash(f"تم مسح {deleted} سجل دخول.", "success")
-    return redirect(url_for("access_logs_page"))
+    return redirect(url_for("settings_page", _anchor="access"))
 
 
-ENTRY_STATUS_LABELS = {
-    "ACTIVE": "نشط",
-    "INSURED": "مؤمَّن",
-    "STOPPED": "توقف (ستوب)",
-    "CLOSED": "مغلق",
-}
-
-
-@app.route("/entries")
+@app.post("/admin-actions/clear")
 @login_required
-def entries_page():
-    status = request.args.get("status", "").strip().upper()
-    if status not in ENTRY_STATUS_LABELS:
-        status = ""
-    entries = db.get_entries(status)
-    arena = {
-        "entries": entries,
-        "status": status,
-        "status_labels": ENTRY_STATUS_LABELS,
-        "counts": db.count_entries(),
-        "updates_counts": {
-            e["id"]: len(db.get_entry_updates(e["id"])) for e in entries
-        },
-    }
-    return render_template("entries.html", **arena)
-
-
-@app.route("/entries/<int:entry_id>")
-@login_required
-def entry_detail(entry_id: int):
-    entry = db.get_entry(entry_id)
-    if entry is None:
-        abort(404)
-    return render_template(
-        "entry_detail.html",
-        entry=entry,
-        updates=db.get_entry_updates(entry_id),
-        status_labels=ENTRY_STATUS_LABELS,
-    )
-
-
-@app.post("/entries/manual")
-@login_required
-def entries_manual():
-    from bot import entries as entries_mod
-
-    text = request.form.get("text", "").strip()
-    if not text:
-        flash("اكتب نص الدخول أولاً.", "error")
-        return redirect(url_for("entries_page"))
-    kind = entries_mod.classify(text)
-    image_path = request.form.get("image_path", "").strip()
-    if kind == "ignore":
-        kind = "entry"
-    snap = entries_mod.build_entry_snapshot(text)
-    entry = db.add_entry(
-        direction=snap["direction"],
-        price_level=snap["price_level"],
-        stop_points=snap["stop_points"],
-        condition_text=text[:1200] or None,
-        image_path=image_path or None,
-        raw_text=text,
-    )
-    db.add_entry_update(
-        entry["id"], kind="entry", value=snap["price_level"],
-        price=snap["price_level"], raw_text=text,
-    )
-    db.add_access_log("entry_add", f"إضافة دخول يدوي: {entry['id']}", _client_ip())
-    flash("تم تسجيل الدخول.", "success")
-    return redirect(url_for("entry_detail", entry_id=entry["id"]))
-
-
-@app.post("/entries/<int:entry_id>/follow")
-@login_required
-def entries_follow(entry_id: int):
-    entry = db.get_entry(entry_id)
-    if entry is None:
-        abort(404)
-    kind = request.form.get("kind", "note")
-    if kind not in ("stop", "target", "note"):
-        kind = "note"
-    value = request.form.get("value", "").strip()
-    price = request.form.get("price", "").strip()
-    raw = request.form.get("raw_text", "").strip()
-    db.add_entry_update(
-        entry["id"], kind=kind, value=value, price=price,
-        raw_text=raw or None,
-    )
-    if kind == "stop":
-        db.update_entry(entry["id"], status="STOPPED")
-    elif kind == "target" and entry["status"] == "ACTIVE":
-        db.update_entry(entry["id"], status="INSURED")
-    db.add_access_log("entry_update", f"تحديث دخول {entry_id}: {kind}", _client_ip())
-    flash("تم تسجيل المتابعة.", "success")
-    return redirect(url_for("entry_detail", entry_id=entry_id))
-
-
-@app.post("/entries/<int:entry_id>/edit")
-@login_required
-def entries_edit(entry_id: int):
-    entry = db.get_entry(entry_id)
-    if entry is None:
-        abort(404)
-    direction = request.form.get("direction", "").strip().upper()
-    direction = direction if direction in ("BUY", "SELL") else entry["direction"]
-    status = request.form.get("status", "").strip().upper()
-    status = status if status in ENTRY_STATUS_LABELS else entry["status"]
-    try:
-        stop_points = max(0, int(request.form.get("stop_points", "0") or "0"))
-    except ValueError:
-        stop_points = entry["stopPoints"]
-    db.update_entry(
-        entry["id"],
-        direction=direction,
-        priceLevel=request.form.get("price_level", "").strip(),
-        stopPoints=stop_points,
-        conditionText=request.form.get("condition_text", "").strip() or None,
-        status=status,
-    )
-    flash("تم حفظ تعديلات الدخول.", "success")
-    return redirect(url_for("entry_detail", entry_id=entry_id))
-
-
-@app.post("/entries/<int:entry_id>/delete")
-@login_required
-def entries_delete(entry_id: int):
-    db.delete_entry(entry_id)
-    flash("تم حذف الدخول.", "success")
-    return redirect(url_for("entries_page"))
+def admin_actions_clear():
+    deleted = db.clear_admin_actions()
+    flash(f"تم مسح {deleted} إجراء من سجل الأدمن.", "success")
+    return redirect(url_for("settings_page", _anchor="admin-log"))
 
 
 @app.post("/check-members")
@@ -1174,6 +1895,7 @@ def edit_member(user_id: int):
         brokerName=request.form.get("broker", "").strip() or None,
         serverName=request.form.get("server", "").strip() or None,
     )
+    _log_admin_action("تعديل بيانات عضو", f"uid={user_id}")
     flash("تم تعديل البيانات.", "success")
     return redirect(url_for("member_detail", user_id=user_id))
 
@@ -1186,6 +1908,7 @@ def mark_removed(user_id: int):
         abort(404)
     if member["status"] in (db.REJECTED, db.EXPIRED, db.VERIFIED):
         db.set_status(user_id, db.REMOVED)
+        _log_admin_action("تعليم كمُزال يدوياً", f"uid={user_id}")
         flash("تم تعليم العضو كمُزال يدوياً.", "success")
     else:
         flash("التعليم متاح للمرفوضين والمنتهين والمقبولين فقط.", "error")
@@ -1198,13 +1921,18 @@ def support_page():
     msg_type = request.args.get("type", "").strip()
     status = request.args.get("status", "").strip()
     q = request.args.get("q", "").strip()
+    priority_arg = request.args.get("priority", "").strip()
+    try:
+        priority_filter = int(priority_arg) if priority_arg in ("0", "1") else None
+    except ValueError:
+        priority_filter = None
     try:
         page = max(1, int(request.args.get("page", "1")))
     except ValueError:
         page = 1
     per_page = 20
     msgs, total = db.get_support_messages(
-        msg_type or None, status or None, page, per_page, q
+        msg_type or None, status or None, page, per_page, q, priority_filter
     )
     for m in msgs:
         try:
@@ -1227,6 +1955,7 @@ def support_page():
     avg_reply_txt = (
         f"{avg_min:.0f} دقيقة" if avg_min is not None else "—"
     )
+    high_count = db.count_support(priority=1)
     active_type = ""
     for _key, label, _c in types:
         if label == msg_type:
@@ -1243,12 +1972,15 @@ def support_page():
         msg_type=msg_type,
         status=status,
         q=q,
+        priority=priority_filter,
+        high_count=high_count,
         types=types,
         statuses=statuses,
         avg_reply_txt=avg_reply_txt,
         templates=templates,
         all_templates=all_templates,
         satisfaction_counts=db.get_support_satisfaction_counts(),
+        template_keys=texts.SUPPORT_CATEGORIES,
     )
 
 
@@ -1263,6 +1995,7 @@ def support_reply(msg_id: int):
         flash("اكتب نص الرد أولاً.", "error")
         return redirect(url_for("support_page", _anchor=f"msg-{msg_id}"))
     db.mark_support_replied(msg_id, reply)
+    _log_admin_action("رد على رسالة دعم", f"msg#{msg_id} uid={msg['telegramUserId']}")
     ok = bridge.notify_member_blocking(
         msg["telegramUserId"],
         texts.SUPPORT_ADMIN_REPLY.format(reply=reply),
@@ -1288,6 +2021,7 @@ def support_reply(msg_id: int):
 @login_required
 def support_delete(msg_id: int):
     db.delete_support_message(msg_id)
+    _log_admin_action("حذف رسالة دعم", f"msg#{msg_id}")
     flash("تم حذف الرسالة.", "success")
     return redirect(url_for("support_page", _anchor=""))
 
@@ -1300,6 +2034,7 @@ def support_note(msg_id: int):
         abort(404)
     note = request.form.get("note", "").strip()
     db.set_support_note(msg_id, note)
+    _log_admin_action("حفظ ملاحظة رسالة دعم", f"msg#{msg_id}")
     flash("تم حفظ الملاحظة الداخلية.", "success")
     return redirect(url_for("support_page", _anchor=f"msg-{msg_id}"))
 
@@ -1317,6 +2052,10 @@ def support_ban_user(msg_id: int):
     user_id = msg["telegramUserId"]
     until = (db.utcnow() + timedelta(hours=hours))
     db.ban_support_user(user_id, until.isoformat())
+    _log_admin_action(
+        "حظر من الدعم",
+        f"uid={user_id} لمدة {hours} ساعة (حتى {until.isoformat()})",
+    )
     flash(f"تم حظر المستخدم من الدعم لمدة {hours} ساعة.", "success")
     return redirect(url_for("support_page", _anchor=f"msg-{msg_id}"))
 
@@ -1328,6 +2067,7 @@ def support_unban_user(msg_id: int):
     if msg is None:
         abort(404)
     if db.unban_support_user(msg["telegramUserId"]):
+        _log_admin_action("فك حظر من الدعم", f"uid={msg['telegramUserId']}")
         flash("تم فك حظر المستخدم من الدعم.", "success")
     else:
         flash("لا يوجد حظر سارٍ لهذا المستخدم.", "error")
@@ -1340,18 +2080,62 @@ def support_templates_save():
     title = request.form.get("title", "").strip()
     body = request.form.get("body", "").strip()
     msg_type = request.form.get("type", "").strip()
+    keywords = request.form.get("keywords", "").strip()
     if title and body:
-        db.add_support_template(title, body, msg_type)
+        db.add_support_template(title, body, msg_type, keywords)
+        _log_admin_action("إضافة قالب رد", f"«{title}» نوع: {msg_type or 'عام'}")
         flash("تم حفظ القالب.", "success")
     else:
         flash("أدخل عنوان النص ومحتواه.", "error")
     return redirect(url_for("support_page", type=msg_type))
 
 
+@app.post("/support/templates/<int:template_id>/toggle")
+@login_required
+def support_template_toggle(template_id: int):
+    tpl = db.get_support_template(template_id)
+    if tpl is None:
+        abort(404)
+    db.set_support_template_enabled(template_id, not tpl.get("enabled", 1))
+    _log_admin_action(
+        "تبديل حالة قالب",
+        f"«{tpl.get('title')}» → {'مفعل' if not tpl.get('enabled', 1) else 'معطل'}",
+    )
+    flash("تم تبديل حالة القالب.", "success")
+    return redirect(url_for("support_page"))
+
+
+@app.post("/support/templates/test")
+@login_required
+def support_template_test():
+    """عرض أقرب قالب لكل رسالة ونقاط المطابقة — لتجربة «ترتيب الردود»."""
+    sample = request.form.get("sample", "").strip()
+    msg_type = request.form.get("type", "").strip()
+    if not sample:
+        flash("اكتب رسالة العضو التجريبية أولاً.", "error")
+        return redirect(url_for("support_page", type=msg_type, _anchor="tpl-test"))
+    matched = db.match_support_template(sample, msg_type)
+    if matched is None:
+        flash("لا يوجد قالب مطابق لهذه الرسالة (تحتاج إضافة كلمات مفتاحية أو عتبة أعلى).", "error")
+        return redirect(url_for("support_page", type=msg_type, _anchor="tpl-test"))
+    db.bump_template_hits(matched["id"])
+    flash(
+        f"✅ أقرب قالب للرسالة: «{matched['title']}» "
+        f"(نوع: {matched['type'] or 'عام'} — درجة المطابقة: "
+        f"{db.score_support_template(sample, matched)} كلمة مدروسة).",
+        "success",
+    )
+    return redirect(url_for("support_page", type=msg_type, _anchor="tpl-test"))
+
+
 @app.post("/support/templates/<int:template_id>/delete")
 @login_required
 def support_template_delete(template_id: int):
+    tpl = db.get_support_template(template_id)
     db.delete_support_template(template_id)
+    _log_admin_action(
+        "حذف قالب رد", f"«{tpl.get('title') if tpl else template_id}»"
+    )
     flash("تم حذف القالب.", "success")
     return redirect(url_for("support_page"))
 
@@ -1362,13 +2146,15 @@ def support_export_csv():
     msg_type = request.args.get("type", "").strip()
     status = request.args.get("status", "").strip()
     q = request.args.get("q", "").strip()
+    priority_arg = request.args.get("priority", "").strip()
+    priority_filter = int(priority_arg) if priority_arg in ("0", "1") else None
     msgs, _ = db.get_support_messages(
-        msg_type or None, status or None, 1, 100000, q
+        msg_type or None, status or None, 1, 100000, q, priority_filter
     )
     buffer = io.StringIO()
     writer = csv.writer(buffer)
     writer.writerow(
-        ["id", "userId", "name", "username", "type", "status",
+        ["id", "userId", "name", "username", "type", "status", "priority",
          "message", "adminReply", "satisfaction", "createdAt", "repliedAt"]
     )
     for m in msgs:
@@ -1376,7 +2162,8 @@ def support_export_csv():
             [
                 m["id"], m["telegramUserId"], m.get("telegramName") or "",
                 m.get("telegramUsername") or "", m.get("msgType") or "",
-                m.get("status") or "", m.get("message") or "",
+                m.get("status") or "", m.get("priority") or 0,
+                m.get("message") or "",
                 m.get("adminReply") or "", m.get("satisfaction") or "",
                 m.get("createdAt") or "", m.get("repliedAt") or "",
             ]

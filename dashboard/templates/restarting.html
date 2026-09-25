@@ -2,17 +2,18 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta http-equiv="refresh" content="4;url={{ url_for('login') }}">
   <title>إعادة تشغيل</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/glass.css') }}">
 </head>
-<body>
-<main class="restart-wrap">
-  <div class="card">{{ message }} <br><br>سيُفتح تسجيل الدخول تلقائياً بعد ثوانٍ...</div>
-</main>
+<body class="login-body">
+  <div class="orb a"></div><div class="orb b"></div><div class="orb c"></div>
+  <div class="restart-wrap">
+    <div class="card glass">{{ message }} <br><br>سيُفتح تسجيل الدخول تلقائياً بعد ثوانٍ...</div>
+  </div>
 </body>
 </html>

@@ -71,6 +71,11 @@ INVALID_INPUT = "الرجاء إرسال نص فقط."
 INVALID_PHOTO = "الرجاء إرسال صورة أو مستند صورة (JPG/PNG/PDF) وليس نصاً."
 PHOTO_FAILED = "تعذر حفظ الصورة من تلغرام. أعد إرسالها صورة مباشرة (JPG/PNG)."
 INVALID_ACCOUNT = "رقم حساب التداول يجب أن يكون أرقاماً فقط.\nأرسل رقم الحساب في هذه الخطوة."
+ACCOUNT_BLOCKED = (
+    "🚫 رقم الحساب الذي أرسلته محظور للتسجيل من إدارة القناة.\n"
+    "لا يمكن إكمال التحقق بهذا الرقم.\n"
+    "إن كان لديك استفسار تواصل مع فريق الدعم."
+)
 INVALID_EMPTY = "لا يمكن ترك هذا الحقل فارغاً.\nأرسل القيمة المطلوبة في هذه الخطوة."
 SUBMITTED = """تم استلام بياناتك.
 طلبك قيد المراجعة من الإدارة."""
@@ -100,6 +105,13 @@ def accepted_message(invite_link: str | None = None, seconds: int = 0) -> str:
         f"{invite_link}\n"
         f"{expiry}\n\n"
         "اضغط الرابط للانضمام مباشرةً."
+    )
+
+
+def accepted_already_inside_message() -> str:
+    return (
+        "تم قبول اشتراكك بنجاح ✅\n\n"
+        "أنت داخل المجموعة بالفعل، فلا حاجة لرابط دخول."
     )
 REJECTED = "تم رفض طلب التحقق.\nالسبب: {reason}"
 NEW_PHOTO_RECEIVED = "تم استلام الصورة الجديدة.\nطلبك قيد المراجعة من الإدارة."
@@ -134,6 +146,52 @@ SUPPORT_RECEIVED = (
     "سيردون عليك هنا قريباً.\n"
     + SUPPORT_ETA
 )
+
+
+def support_received(ticket_no: int) -> str:
+    """تأكيد استلام رسالة الدعم مع رقم التذكرة للتواصل بشأنها لاحقاً."""
+    return (
+        "✅ وصلت رسالتك إلى فريق الدعم.\n"
+        f"🎫 رقم تذكرتك: #{ticket_no}\n"
+        "للرد على هذه التذكرة نفسها لاحقاً أرسل: بخصوص " + str(ticket_no) + "\n"
+        + SUPPORT_ETA
+    )
+
+
+SUPPORT_TICKET_NOT_FOUND = (
+    "🤔 لم أجد تذكرة بهذا الرقم.\n"
+    "رقم تذكرتك يظهر في رسالة التأكيد التي وصلك عند إرسال رسالتك (مثل #1234).\n"
+    "تأكد أنك في نفس الحساب الذي أرسل الرسالة."
+)
+
+
+def support_ticket_followup_added(ticket_no: int) -> str:
+    return (
+        f"✅ أُضيفت متابعتك إلى التذكرة #{ticket_no} وأُعيد فتحها لفريق الدعم.\n"
+        "سيردون عليك هنا قريباً."
+    )
+
+
+def support_ticket_card(msg: dict) -> str:
+    """بطاقة عرض التذكرة للعضو: الحالة، الرسالة الأصلية، رد الدعم، والمتابعات."""
+    status_text = "تم الرد ✅" if msg.get("status") == "replied" else "قيد المعالجة ⏳"
+    lines = [
+        f"🎫 التذكرة #{msg['id']}",
+        f"النوع: {msg.get('msgType') or '-'}",
+        f"الحالة: {status_text}",
+        "",
+        f"رسالتك:\n{msg.get('message') or '-'}",
+    ]
+    if msg.get("adminReply"):
+        lines.append(f"\n📨 رد فريق الدعم:\n{msg['adminReply']}")
+    updates = (msg.get("ticketUpdates") or "").strip()
+    if updates:
+        lines.append(f"\n─── المتابعات ───\n{updates}")
+    lines.append(
+        "\n📌 للرد على هذه التذكرة أرسل:\n"
+        f"بخصوص {msg['id']} ثم نص متابعتك"
+    )
+    return "\n".join(lines)
 SUPPORT_CANCEL = "تم إنهاء جلسة الدعم."
 SUPPORT_PROMPT_TEXT_ONLY = "أرسل رسالتك نصاً فقط 👇"
 SUPPORT_PHOTO_CAPTION_OR_TEXT = (
@@ -153,6 +211,7 @@ SUPPORT_TOO_MANY = (
 )
 
 SUPPORT_SATISFACTION_ASK = "هل حُلّت مشكلتك؟"
+
 BTN_SATISFIED = "✅ نعم، حُلّت"
 BTN_REOPEN = "🔄 لا، ما زالت"
 SUPPORT_SATISFACTION_DONE = "شكراً لتواصلك 🌟 نتمنى لك التوفيق."
@@ -179,11 +238,29 @@ def support_banned_message(banned_until_iso: str) -> str:
 
 def admin_new_request(member: dict) -> str:
     username = f"@{member['telegramUsername']}" if member["telegramUsername"] else "-"
+    lines = [
+        "📩 طلب تحقق جديد",
+        f"الاسم: {member['telegramName'] or '-'}",
+        f"Username: {username}",
+        f"Telegram ID: {member['telegramUserId']}",
+    ]
+    if member.get("tradingAccountNumber"):
+        lines.append(f"رقم الحساب: {member['tradingAccountNumber']}")
+    if member.get("brokerName"):
+        lines.append(f"الوسيط: {member['brokerName']}")
+    if member.get("serverName"):
+        lines.append(f"السيرفر: {member['serverName']}")
+    return "\n".join(lines)
+
+
+def admin_blocked_attempt(member: dict, reason: str = "") -> str:
+    username = f"@{member['telegramUsername']}" if member["telegramUsername"] else "-"
     return (
-        "📩 طلب تحقق جديد\n"
+        "🚫 محاولة تسجيل برقم حساب محظور\n"
         f"الاسم: {member['telegramName'] or '-'}\n"
         f"Username: {username}\n"
-        f"Telegram ID: {member['telegramUserId']}"
+        f"Telegram ID: {member['telegramUserId']}\n"
+        f"سبب الحظر: {reason or '-'}"
     )
 
 
@@ -222,3 +299,111 @@ def admin_expired(member: dict) -> str:
         f"Telegram ID: {member['telegramUserId']}\n"
         "الإزالة من القناة يدوية من لوحة التحكم."
     )
+
+
+def deadline_reminder(member: dict, seconds_left: float, second: bool = False) -> str:
+    """تذكير تلقائي للمشترك قبل انتهاء مهلة إرسال بيانات التحقق."""
+    remaining = _format_duration(max(int(seconds_left), 60))
+    urgency = (
+        "🚨 تنبيه عاجل — المهلة توشك أن تنتهي!"
+        if second
+        else "⏳ تذكير ودّي قبل انتهاء مهلتك"
+    )
+    return (
+        f"{urgency}\n\n"
+        f"تبقّى لديك {remaining} فقط لإكمال إرسال بيانات التحقق "
+        f"(رقم الحساب، الوسيط، الصورة...).\n\n"
+        "أرسل البيانات الآن من البوت لتأكيد اشتراكك، وإلا سينتهي "
+        "طلبك وستُزال بياناتك من القناة وفق الشروط."
+    )
+
+
+def admin_auto_removed(member: dict, kind: str, grace_hours: int) -> str:
+    username = f"@{member['telegramUsername']}" if member["telegramUsername"] else "-"
+    reason = "انتهت مهلة التحقق" if kind == "expired" else "تم رفض طلبه نهائياً"
+    grace_note = (
+        " فوراً (بدون مهلة سماح)." if grace_hours <= 0
+        else f" بعد مهلة سماح {grace_hours} ساعة."
+    )
+    return (
+        "⛔ إزالة تلقائية من المجموعة:\n"
+        f"السبب: {reason}{grace_note}\n"
+        f"الاسم: {member['telegramName'] or '-'}\n"
+        f"Username: {username}\n"
+        f"Telegram ID: {member['telegramUserId']}"
+    )
+
+
+def clone_alert_summary(alerts: list[dict]) -> str:
+    lines = [
+        "🚨 تنبيه: قنوات يحتمل أن تستعير هوية قناتك!",
+        "",
+    ]
+    for alert in alerts[:5]:
+        username = f"@{alert['username']}" if alert["username"] else "-"
+        lines.append(
+            f"• {alert.get('title') or username}\n"
+            f"  {username} — تطابق العنوان "
+            f"{round((alert.get('titleRatio') or 0) * 100)}% / اليوزر "
+            f"{round((alert.get('userSim') or 0) * 100)}%"
+        )
+    if len(alerts) > 5:
+        lines.append(f"… و{len(alerts) - 5} أخرى.")
+    lines.append("")
+    lines.append("راجعها من لوحة التحكم ▸ الإعدادات ▸ مراقبة القنوات المقلّدة.")
+    return "\n".join(lines)
+
+
+# ─── إجراءات الأدمن من تلغرام مباشرة ──────────────────────────────────
+ADMIN_REJECT_REASON_PROMPT = (
+    "✍️ اكتب سبب الرفض لهذا العضو الآن (نص فقط)،\n"
+    "أو أرسل /إلغاء للتخلي عن الرفض."
+)
+ADMIN_REJECT_CANCELLED = "أُلغيت عملية الرفض."
+ADMIN_REJECT_DONE = "تم رفض العضو وإبلاغه بالسبب."
+ADMIN_ACTION_DONE_PHOTO = "أُرسل للعضو طلب صورة جديدة."
+ADMIN_ACTION_DONE_EXTEND = "تم تمديد مهلة التحقق."
+ADMIN_ACTION_ALREADY_DONE = "هذا الطلب عولج مسبقاً — لا حاجة لإجراء جديد."
+ADMIN_ACTION_DENIED = "غير مصرح لك بتنفيذ هذا الإجراء."
+REQUEST_NEW_PHOTO_TEXT = "الرجاء إرسال صورة جديدة للرصيد أو Equity."
+
+
+def rejected_message(reason: str) -> str:
+    return f"تم رفض طلب التحقق.\nالسبب: {reason}"
+
+
+def extended_message(hours: int) -> str:
+    return f"تم تمديد مهلة التحقق {hours} ساعة."
+
+
+def admin_approved_confirmation(summary: str) -> str:
+    return f"✅ تم تنفيذ القبول: {summary}"
+
+
+# ── الترخيص (تجريبي/دائمي) ───────────────────────────────
+
+TRIAL_FULL_WARN = (
+    "وصلت النسخة الحالية إلى الحد الأقصى للأعضاء.\n"
+    "للترقية إلى النسخة الكاملة راسل الإدارة."
+)
+
+
+def license_admin_warning(st: dict) -> str:
+    """رسالة تحذير ترسل للأدمن من البوت عن حالة الترخيص (مرة واحدة كافية)."""
+    if not st["valid"] and st["kind"]:
+        return (
+            "🔒 تنبيه الترخيص: انتهت صلاحية النسخة المفوّعة.\n"
+            "جدّد كود التفعيل من صفحة التفعيل في اللوحة ليعود النظام للعمل."
+        )
+    if not st["valid"]:
+        return (
+            "🔒 تنبيه الترخيص: النسخة غير مفعّلة بعد.\n"
+            "أدخل كود التفعيل من الصفحة الأولى للوحة (نسخة تجريبية أو دائمة)."
+        )
+    if st["trial"] and st["remaining_days"] is not None:
+        return (
+            "🔒 تنبيه الترخيص: نسخة تجريبية نشطة.\n"
+            + f"المتبقي {st['remaining_days']:.1f} يوم — سقف الأعضاء {st['max_members']}.\n"
+            + "جهّز الترقية للنسخة الدائمة عند الحاجة."
+        )
+    return ""

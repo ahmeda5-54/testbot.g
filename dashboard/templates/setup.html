@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}معالج الإعداد الأول{% endblock %}
+
+{% block page_title %}معالج الإعداد الأول{% endblock %}
+
+{% block topbar_actions %}
+{% if configured %}
+<a class="btn btn-outline" href="{{ url_for('index') }}">↩ لوحة التحكم</a>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<section class="hero glass">
+  <div class="hero-h">
+    <div>
+      <h2>{{ 'تعديل مفاتيح النظام' if configured else 'أهلاً بك! جهّز نظامك الخاص' }}</h2>
+      <small>
+        هذه صفحة الإعداد الخاصة بمشروعك أنت — تكتب فيها مفاتيحك أنت (توكن البوت، القناة،
+        كلمة مرور اللوحة...) وتُخزن <strong>مشفرة في قاعدة بيانات مشروعك</strong> وليس في أي ملفات
+        أو كود، ولا يطلع عليها أحد سواك. لن يعمل أي شيء قبل إكمالها.
+      </small>
+    </div>
+  </div>
+</section>
+
+{% if not configured %}
+<div class="card" style="padding:14px;border-color:rgba(245,158,11,.5);">
+  <b>📋 خطوات سريعة قبل البدء (دقيقتان):</b>
+  <ol style="margin:8px 0 0;padding-right:20px;color:#cbd5e1;line-height:1.9;">
+    <li>صفّر التوكن الجديد: افتح <b dir="ltr">@BotFather</b> في تلغرام → <b dir="ltr">/newbot</b> → انسخ التوكن.</li>
+    <li>اعرف معرفك (للأدمن): أرسل أي رسالة إلى <b dir="ltr">@userinfobot</b> وسيعطيك Id بالرقم.</li>
+    <li>معرف القناة: أضف البوت أدمن فيها، ثم أرسل <b dir="ltr">/post</b> للبوت بعد التهيئة أو استخدم معرف المجموعة (−100...).</li>
+  </ol>
+</div>
+{% endif %}
+
+<form class="card settings-form" method="post" action="{{ url_for('setup_page') }}" style="margin-top:16px;">
+  <h3 class="settings-section-title">🔐 لوحة التحكم</h3>
+  <label>
+    كلمة مرور لوحة التحكم{% if configured %} (اتركها فارغة للإبقاء على الحالية){% endif %}
+    <input type="password" dir="ltr" name="dashboard_password" value="" placeholder="كلمة مرور قوية" {% if not configured %}required{% endif %}>
+  </label>
+
+  <h3 class="settings-section-title" style="margin-top:18px;">🤖 البوت والقناة</h3>
+  <label>توكن البوت (من @BotFather)
+    <input type="text" dir="ltr" name="bot_token" value="{{ values.get('BOT_TOKEN', '') }}" placeholder="123456:ABC-DEF..." required>
+  </label>
+  <label>يوزرنيم البوت (بدون @ — اختياري لزر البدء)
+    <input type="text" dir="ltr" name="bot_username" value="{{ values.get('BOT_USERNAME', '') }}" placeholder="my_bot">
+  </label>
+  <label>معرف القناة/المجموعة CHANNEL_ID
+    <input type="text" dir="ltr" name="channel_id" value="{{ values.get('CHANNEL_ID', '') }}" placeholder="-1001234567890" required>
+  </label>
+  <label>معرفات الأدمن (تفصل بفواصل)
+    <input type="text" dir="ltr" name="admin_ids" value="{{ values.get('ADMIN_IDS', '') }}" placeholder="111111111,222222222" required>
+  </label>
+  <label>مهلة التحقق بالساعات
+    <input type="number" dir="ltr" name="deadline_hours" value="{{ values.get('DEADLINE_HOURS', '48') }}" min="1" required>
+  </label>
+
+  <h3 class="settings-section-title" style="margin-top:18px;">🛟 بوت الدعم (اختياري)</h3>
+  <div class="support-mode-row" style="display:flex;flex-direction:column;gap:10px;margin-bottom:14px;">
+    <label class="check-row">
+      <input type="radio" name="support_mode" value="inline" {% if values.get('SUPPORT_MODE', 'inline') != 'dedicated' %}checked{% endif %}>
+      <span><strong>البوت الرئيسي فقط</strong> — كل المهام بما فيها الدعم داخل البوت الرئيسي.</span>
+    </label>
+    <label class="check-row">
+      <input type="radio" name="support_mode" value="dedicated" {% if values.get('SUPPORT_MODE') == 'dedicated' %}checked{% endif %}>
+      <span><strong>بوت دعم مخصص</strong> — محادثات الدعم تمر عبر بوت ثانٍ (يتطلب التوكن بالأسفل).</span>
+    </label>
+  </div>
+  <label>توكن بوت الدعم (اختياري)
+    <input type="password" dir="ltr" name="support_bot_token" value="{{ values.get('SUPPORT_BOT_TOKEN', '') }}" placeholder="توكن بوت الدعم من @BotFather">
+  </label>
+  <label>يوزرنيم بوت الدعم (بدون @)
+    <input type="text" dir="ltr" name="support_bot_username" value="{{ values.get('SUPPORT_BOT_USERNAME', '') }}" placeholder="support_bot123">
+  </label>
+
+  <h3 class="settings-section-title" style="margin-top:18px;">🌐 إضافات (اختياري)</h3>
+  <label>بروكسي تلغرام (اتركه فارغاً إن لم تحتجه)
+    <input type="text" dir="ltr" name="proxy_url" value="{{ values.get('PROXY_URL', '') }}" placeholder="socks5://127.0.0.1:1080">
+  </label>
+
+  <div class="settings-hint" style="margin-top:6px;">
+    🔑 مفتاح الحماية (SECRET_KEY) يُولَّد تلقائياً ولا تحتاج لكتابته.
+  </div>
+
+  <button class="btn btn-check" type="submit" style="margin-top:10px;">
+    {{ '💾 حفظ وتطبيق الإعدادات' if configured else '🚀 حفظ وتشغيل نظامي' }}
+  </button>
+</form>
+{% endblock %}

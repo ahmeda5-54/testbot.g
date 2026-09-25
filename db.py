@@ -1,9 +1,13 @@
 import json
 import sqlite3
+import threading
+import time as _time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import config
+
+_local = threading.local()
 
 NOT_STARTED = "NOT_STARTED"
 PENDING = "PENDING"
@@ -67,7 +71,9 @@ CREATE TABLE IF NOT EXISTS support_messages (
     adminNote TEXT,
     replyHistory TEXT NOT NULL DEFAULT '[]',
     hasAttachment INTEGER NOT NULL DEFAULT 0,
-    attachmentRef TEXT
+    attachmentRef TEXT,
+    priority INTEGER NOT NULL DEFAULT 0,
+    ticketUpdates TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS support_templates (
@@ -75,6 +81,9 @@ CREATE TABLE IF NOT EXISTS support_templates (
     title TEXT NOT NULL,
     body TEXT NOT NULL,
     type TEXT NOT NULL DEFAULT '',
+    keywords TEXT NOT NULL DEFAULT '',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    hits INTEGER NOT NULL DEFAULT 0,
     createdAt TEXT NOT NULL
 );
 
@@ -105,32 +114,66 @@ CREATE TABLE IF NOT EXISTS access_logs (
     createdAt TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS entries (
+CREATE TABLE IF NOT EXISTS admin_actions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    direction TEXT NOT NULL DEFAULT '',
-    priceLevel TEXT NOT NULL DEFAULT '',
-    stopPoints INTEGER NOT NULL DEFAULT 0,
-    conditionText TEXT,
-    status TEXT NOT NULL DEFAULT 'ACTIVE',
-    imagePath TEXT,
-    imageHash TEXT,
-    imageFileId TEXT,
-    rawText TEXT,
-    sourceMessageId INTEGER,
-    createdAt TEXT NOT NULL,
-    updatedAt TEXT NOT NULL
+    action TEXT NOT NULL,
+    detail TEXT,
+    admin TEXT,
+    createdAt TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS entry_updates (
+CREATE TABLE IF NOT EXISTS blocked_accounts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    entryId INTEGER NOT NULL,
-    kind TEXT NOT NULL DEFAULT 'note',
-    value TEXT,
-    price TEXT,
-    imagePath TEXT,
-    imageHash TEXT,
-    rawText TEXT,
-    sourceMessageId INTEGER,
+    account_raw TEXT NOT NULL,
+    account_norm TEXT NOT NULL,
+    reason TEXT,
+    createdAt TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS faq_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    keywords TEXT NOT NULL,
+    reply TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    hits INTEGER NOT NULL DEFAULT 0,
+    createdAt TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS clone_watch (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL,
+    addedBy TEXT,
+    addedAt TEXT NOT NULL,
+    lastCheckedAt TEXT,
+    unreachable INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS clone_alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL,
+    channelId INTEGER,
+    title TEXT,
+    titleRatio REAL NOT NULL DEFAULT 0,
+    userSim REAL NOT NULL DEFAULT 0,
+    photoScore REAL NOT NULL DEFAULT 0,
+    score REAL NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'new',
+    firstSeenAt TEXT NOT NULL,
+    lastSeenAt TEXT
+);
+
+CREATE TABLE IF NOT EXISTS scheduled_posts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL DEFAULT '',
+    photo TEXT,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    time TEXT NOT NULL,
+    days TEXT NOT NULL DEFAULT '0123456',
+    pin INTEGER NOT NULL DEFAULT 1,
+    lastRunKey TEXT,
+    lastResult TEXT NOT NULL DEFAULT '',
+    sentCount INTEGER NOT NULL DEFAULT 0,
     createdAt TEXT NOT NULL
 );
 """
@@ -141,6 +184,12 @@ DEFAULT_SETTINGS = {
     "require_server": "1",
     "require_photo": "1",
     "auto_remove_expired": "0",
+    "auto_remove_rejected": "0",
+    "auto_remove_grace_hours": "0",
+    "reminder_enabled": "1",
+    "reminder_hours_1": "6",
+    "reminder_hours_2": "1",
+    "clone_check_hours": "4",
 }
 
 
@@ -153,11 +202,16 @@ def now_iso() -> str:
 
 
 def get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(config.DB_PATH, timeout=5, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    conn.execute("PRAGMA synchronous=NORMAL")
+    # اتصال واحد لكل thread يُعاد استخدامه بدل فتح اتصال جديد في كل استعلام —
+    # هذا يقلص بشكل كبير زمن الصفحات (مرة WAL لكل thread بدل كل query).
+    conn = getattr(_local, "conn", None)
+    if conn is None:
+        conn = sqlite3.connect(config.DB_PATH, timeout=5, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        _local.conn = conn
     return conn
 
 
@@ -172,6 +226,10 @@ def init_db() -> None:
         if "talkedToBot" not in cols:
             conn.execute("ALTER TABLE members ADD COLUMN talkedToBot INTEGER")
             conn.execute("UPDATE members SET talkedToBot = 1")
+        if "reminder1At" not in cols:
+            conn.execute("ALTER TABLE members ADD COLUMN reminder1At TEXT")
+        if "reminder2At" not in cols:
+            conn.execute("ALTER TABLE members ADD COLUMN reminder2At TEXT")
         for key, value in DEFAULT_SETTINGS.items():
             conn.execute(
                 "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
@@ -191,14 +249,7 @@ def init_db() -> None:
         )
         _migrate_support_columns(conn)
         _migrate_template_type_column(conn)
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_entry_updates_entry "
-            "ON entry_updates(entryId)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_entries_status "
-            "ON entries(status)"
-        )
+        _migrate_template_keywords_column(conn)
 
 
 def _migrate_template_type_column(conn: sqlite3.Connection) -> None:
@@ -206,6 +257,23 @@ def _migrate_template_type_column(conn: sqlite3.Connection) -> None:
     cols = [row["name"] for row in conn.execute("PRAGMA table_info(support_templates)")]
     if "type" not in cols:
         conn.execute("ALTER TABLE support_templates ADD COLUMN type TEXT NOT NULL DEFAULT ''")
+
+
+def _migrate_template_keywords_column(conn: sqlite3.Connection) -> None:
+    """يضيف أعمدة المطابقة التلقائية للقوالب (كلمات مفتاحية، تفعيل، عدّاد)."""
+    cols = [row["name"] for row in conn.execute("PRAGMA table_info(support_templates)")]
+    if "keywords" not in cols:
+        conn.execute(
+            "ALTER TABLE support_templates ADD COLUMN keywords TEXT NOT NULL DEFAULT ''"
+        )
+    if "enabled" not in cols:
+        conn.execute(
+            "ALTER TABLE support_templates ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1"
+        )
+    if "hits" not in cols:
+        conn.execute(
+            "ALTER TABLE support_templates ADD COLUMN hits INTEGER NOT NULL DEFAULT 0"
+        )
 
 
 def _migrate_support_columns(conn: sqlite3.Connection) -> None:
@@ -217,6 +285,8 @@ def _migrate_support_columns(conn: sqlite3.Connection) -> None:
         "replyHistory": "TEXT NOT NULL DEFAULT '[]'",
         "hasAttachment": "INTEGER NOT NULL DEFAULT 0",
         "attachmentRef": "TEXT",
+        "priority": "INTEGER NOT NULL DEFAULT 0",
+        "ticketUpdates": "TEXT NOT NULL DEFAULT ''",
     }
     for col, definition in mapping.items():
         if col not in cols:
@@ -272,6 +342,34 @@ def get_members(status: Optional[str] = None) -> list[dict]:
     query += " ORDER BY createdAt DESC"
     with get_connection() as conn:
         rows = conn.execute(query, params).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def get_members_by_statuses(statuses: list[str]) -> list[dict]:
+    """أعضاء في عدة حالات دفعة واحدة (لقائمة «بانتظارك» والإجراءات الجماعية)."""
+    statuses = [s for s in statuses if s]
+    if not statuses:
+        return []
+    placeholders = ",".join("?" * len(statuses))
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM members WHERE status IN ({placeholders}) "
+            "ORDER BY createdAt DESC",
+            list(statuses),
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def get_members_brief(limit: int = 500) -> list[dict]:
+    """قائمة خفيفة للأعضاء (المعرّف والاسم فقط) — للقوائم المنسدلة في اللوحة
+    دون تحميل كل الحقول الثقيلة (صور/نصوص)."""
+    limit = max(1, min(2000, int(limit)))
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT telegramUserId, telegramName, telegramUsername "
+            "FROM members ORDER BY createdAt DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
     return [_row_to_dict(r) for r in rows]
 
 
@@ -333,6 +431,7 @@ def upsert_member(user_id: int, **fields) -> dict:
                 f"INSERT INTO members ({', '.join(cols)}) VALUES ({placeholders})",
                 vals,
             )
+        _invalidate_dupe_cache()
         return get_member(user_id)
 
     updates = dict(fields)
@@ -343,6 +442,7 @@ def upsert_member(user_id: int, **fields) -> dict:
                 f"UPDATE members SET {set_clause} WHERE telegramUserId = ?",
                 (*updates.values(), user_id),
             )
+        _invalidate_dupe_cache()
     return get_member(user_id)
 
 
@@ -356,7 +456,140 @@ def delete_member(user_id: int) -> bool:
             "DELETE FROM members WHERE telegramUserId = ?", (user_id,)
         )
         conn.commit()
+    _invalidate_dupe_cache()
     return cursor.rowcount > 0
+
+
+def reset_all_data() -> None:
+    """مسح كل بيانات النظام استعداداً لعميل/مشترٍ جديد بنفس الرابط.
+    يبقي الجداول والبنية والقوالب الجاهزة، ويزيل الأعضاء والدعم والسجلات
+    والإعدادات والصور والمجموعات المقلّدة والرسائل المجدولة والترخيص."""
+    tables = [
+        "members",
+        "support_messages",
+        "support_bans",
+        "broadcasts",
+        "access_logs",
+        "admin_actions",
+        "blocked_accounts",
+        "faq_rules",
+        "clone_watch",
+        "clone_alerts",
+        "scheduled_posts",
+    ]
+    with get_connection() as conn:
+        for table in tables:
+            conn.execute(f"DELETE FROM {table}")
+        conn.execute("DELETE FROM settings")
+        conn.commit()
+    _invalidate_dupe_cache()
+    # الصور والملفات المرفوعة
+    try:
+        if config.UPLOADS_DIR.exists():
+            for path in config.UPLOADS_DIR.iterdir():
+                if path.is_file():
+                    try:
+                        path.unlink()
+                    except OSError:
+                        pass
+    except Exception:
+        pass
+
+
+def norm_account(account: str) -> str:
+    """تطبيع رقم الحساب للمقارنة (إزالة الفراغات والرموز، إبقاء الأرقام والحروف)."""
+    return "".join(ch for ch in (account or "").strip() if ch.isalnum())
+
+
+# ذاكرة مؤقتة لنتيجة الحسابات المكررة (تُحسب مرة وتُلغى عند أي تعديل على الأعضاء)
+_dupe_cache: dict = {"ts": 0.0, "value": None}
+
+
+def _invalidate_dupe_cache() -> None:
+    _dupe_cache["value"] = None
+
+
+def find_duplicate_accounts() -> list[dict]:
+    """مجموعات أرقام الحسابات المسجلة عند أكثر من عضو (بكل الحالات)."""
+    cached = _dupe_cache.get("value")
+    if cached is not None and _time.monotonic() - _dupe_cache["ts"] < 30:
+        return cached
+    groups: dict[str, list] = {}
+    for m in get_members():
+        acc = (m.get("tradingAccountNumber") or "").strip()
+        norm = norm_account(acc)
+        if not acc or not norm:
+            continue
+        groups.setdefault(norm, []).append(m)
+    result = [
+        {"account": g[0]["tradingAccountNumber"], "owners": g, "count": len(g)}
+        for g in groups.values()
+        if len(g) > 1
+    ]
+    _dupe_cache.update(ts=_time.monotonic(), value=result)
+    return result
+
+
+def account_owners(account: str, exclude: int = 0) -> list[dict]:
+    """بقية الأعضاء (باستثناء exclude) المسجلين بنفس رقم الحساب."""
+    norm = norm_account(account)
+    if not norm:
+        return []
+    return [
+        m
+        for m in get_members()
+        if m["telegramUserId"] != exclude
+        and norm_account(m.get("tradingAccountNumber")) == norm
+    ]
+
+
+def block_account(account: str, reason: str = "") -> dict:
+    account = (account or "").strip()
+    norm = norm_account(account)
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "INSERT INTO blocked_accounts (account_raw, account_norm, reason, createdAt) "
+            "VALUES (?, ?, ?, ?)",
+            (account, norm, (reason or "")[:500], now_iso()),
+        )
+        conn.commit()
+    return {
+        "id": cursor.lastrowid,
+        "account_raw": account,
+        "account_norm": norm,
+        "reason": (reason or "")[:500],
+        "createdAt": now_iso(),
+    }
+
+
+def unblock_account(block_id: int) -> bool:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "DELETE FROM blocked_accounts WHERE id = ?", (block_id,)
+        )
+        conn.commit()
+    return cursor.rowcount > 0
+
+
+def get_blocked_accounts() -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM blocked_accounts ORDER BY id DESC"
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def is_account_blocked(account: str) -> Optional[dict]:
+    """يعيد سجل الحظر إن كان الرقم (بعد التطبيع) محظوراً."""
+    norm = norm_account(account)
+    if not norm:
+        return None
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM blocked_accounts WHERE account_norm = ? LIMIT 1",
+            (norm,),
+        ).fetchone()
+    return _row_to_dict(row) if row else None
 
 
 def start_deadline(user_id: int) -> dict:
@@ -386,7 +619,7 @@ def extend_deadline(user_id: int) -> Optional[str]:
     if not member:
         return None
     deadline = (utcnow() + timedelta(hours=config.DEADLINE_HOURS)).isoformat()
-    upsert_member(user_id, deadlineAt=deadline)
+    upsert_member(user_id, deadlineAt=deadline, reminder1At=None, reminder2At=None)
     return deadline
 
 
@@ -408,6 +641,112 @@ def expire_overdue() -> list[dict]:
     return expired
 
 
+def _int_setting(key: str, default: int) -> int:
+    raw = get_setting(key, str(default))
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return default
+
+
+def get_setting_flag(key: str, default: str = "0") -> bool:
+    return get_setting(key, default) == "1"
+
+
+def deadline_seconds_left(member: dict) -> Optional[float]:
+    """الثواني المتبقية حتى deadlineAt (لا تقل عن 0). None إن غاب الموعد أو فُسدت صيغته."""
+    if not member:
+        return None
+    raw = member.get("deadlineAt")
+    if not raw:
+        return None
+    try:
+        deadline = datetime.fromisoformat(raw)
+    except (TypeError, ValueError):
+        return None
+    now = utcnow()
+    if deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=now.tzinfo)
+    return max((deadline - now).total_seconds(), 0.0)
+
+
+def get_reminders_due(hours_1: int, hours_2: int) -> tuple[list[dict], list[dict]]:
+    """يُرجع (تذكير أول مستحق، تذكير ثانٍ مستحق) بناءً على أوقات البقاء
+    على الموعد قبل deadlineAt. من تلقّى التذكير مسبقاً لا يتلقاه مجدداً.
+    من استلم التذكير الأول يُعاد إدراجه فقط عند تفعيل التذكير الثاني."""
+    due_1: list[dict] = []
+    due_2: list[dict] = []
+    if hours_1 <= 0 and hours_2 <= 0:
+        return due_1, due_2
+    now = utcnow()
+    with get_connection() as conn:
+        rows = conn.execute(
+            """SELECT * FROM members
+               WHERE status IN ('PENDING', 'SUBMITTED', 'UNDER_REVIEW')
+               AND deadlineAt IS NOT NULL AND reminder2At IS NULL
+               AND (reminder1At IS NULL OR ? > 0)
+               AND deadlineAt >= ?""",
+            (1 if hours_2 > 0 else 0, now.isoformat()),
+        ).fetchall()
+    for row in rows:
+        member = _row_to_dict(row)
+        seconds_left = deadline_seconds_left(member)
+        if seconds_left is None:
+            continue
+        if hours_1 > 0 and member.get("reminder1At") is None and seconds_left <= hours_1 * 3600:
+            due_1.append(member)
+        elif hours_2 > 0 and seconds_left <= hours_2 * 3600:
+            due_2.append(member)
+    return due_1, due_2
+
+
+def mark_reminder_sent(user_id: int, which: int) -> None:
+    col = "reminder1At" if which == 1 else "reminder2At"
+    with get_connection() as conn:
+        conn.execute(
+            f"UPDATE members SET {col} = ? WHERE telegramUserId = ?",
+            (now_iso(), user_id),
+        )
+
+
+def get_auto_removal_due(
+    grace_hours: int, include_expired: bool, include_rejected: bool
+) -> list[dict]:
+    """أعضاء يستحقون الإزالة التلقائية بعد انقضاء مهلة السماح.
+
+    المنتهية: انعدام الموعد + مهلة السماح. المرفوضة: من وقت المراجعة (أو
+    الموعد أو الإنشاء إن غاب). يُشترط inGroup = 1 لمن هم داخل المجموعة فعلاً."""
+    statuses: list[str] = []
+    if include_expired:
+        statuses.append(EXPIRED)
+    if include_rejected:
+        statuses.append(REJECTED)
+    if not statuses:
+        return []
+    cutoff = (utcnow() - timedelta(hours=max(0, grace_hours))).isoformat()
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"""SELECT * FROM members
+                WHERE status IN ({','.join('?' * len(statuses))})
+                AND inGroup = 1""",
+            statuses,
+        ).fetchall()
+    due: list[dict] = []
+    for row in rows:
+        member = _row_to_dict(row)
+        if member["status"] == EXPIRED:
+            base = member.get("deadlineAt") or member.get("createdAt")
+        else:
+            base = (
+                member.get("reviewedAt")
+                or member.get("deadlineAt")
+                or member.get("createdAt")
+            )
+        if base and base <= cutoff:
+            due.append(member)
+    return due
+
+
 def add_support_message(
     user_id: int,
     message: str,
@@ -416,6 +755,7 @@ def add_support_message(
     username: str | None = None,
     has_attachment: int = 0,
     attachment_ref: str | None = None,
+    priority: int = 0,
 ) -> dict | None:
     message = (message or "").strip()
     if not message:
@@ -425,9 +765,10 @@ def add_support_message(
         cursor = conn.execute(
             """INSERT INTO support_messages
                (telegramUserId, telegramName, telegramUsername, msgType,
-                message, status, createdAt, hasAttachment, attachmentRef)
-               VALUES (?, ?, ?, ?, ?, 'new', ?, ?, ?)""",
-            (user_id, name, username, msg_type, message, now_iso(), has_attachment, attachment_ref),
+                message, status, createdAt, hasAttachment, attachmentRef, priority)
+               VALUES (?, ?, ?, ?, ?, 'new', ?, ?, ?, ?)""",
+            (user_id, name, username, msg_type, message, now_iso(),
+             has_attachment, attachment_ref, 1 if priority else 0),
         )
         conn.commit()
         msg_id = cursor.lastrowid
@@ -459,6 +800,7 @@ def get_support_messages(
     page: int = 1,
     per_page: int = 20,
     q: str = "",
+    priority: Optional[int] = None,
 ) -> tuple[list[dict], int]:
     page = max(1, int(page))
     per_page = max(1, min(100, int(per_page)))
@@ -473,6 +815,9 @@ def get_support_messages(
     if status:
         clauses.append("status = ?")
         params.append(status)
+    if priority is not None:
+        clauses.append("priority = ?")
+        params.append(1 if int(priority) else 0)
     q = (q or "").strip()
     if q:
         like = f"%{q}%"
@@ -485,7 +830,8 @@ def get_support_messages(
         where = " WHERE " + " AND ".join(clauses)
         query += where
         count_query += where
-    query += " ORDER BY createdAt DESC, id DESC LIMIT ? OFFSET ?"
+    # الأولوية العالية أولاً ثم الأحدث (الأقدم ترتيباً بالأسفل لا يتغير).
+    query += " ORDER BY priority DESC, createdAt DESC, id DESC LIMIT ? OFFSET ?"
     with get_connection() as conn:
         row = conn.execute(count_query, params).fetchone()
         total = row["c"]
@@ -496,7 +842,9 @@ def get_support_messages(
 
 
 def count_support(
-    msg_type: Optional[str] = None, status: Optional[str] = None
+    msg_type: Optional[str] = None,
+    status: Optional[str] = None,
+    priority: Optional[int] = None,
 ) -> int:
     query = "SELECT COUNT(*) AS c FROM support_messages"
     clauses: list[str] = []
@@ -507,6 +855,9 @@ def count_support(
     if status:
         clauses.append("status = ?")
         params.append(status)
+    if priority is not None:
+        clauses.append("priority = ?")
+        params.append(1 if int(priority) else 0)
     if clauses:
         query += " WHERE " + " AND ".join(clauses)
     with get_connection() as conn:
@@ -638,19 +989,72 @@ def avg_support_reply_time(days: int = 30) -> Optional[float]:
     return total_minutes / count
 
 
+# ── الأولوية التلقائية وأرقام التذاكر ──────────────────
+# كلمات الاستعجال/الخسارة/السحب/الحظر — بعد التطبيع (تجريد التشكيل والهمزات).
+_PRIORITY_KEYWORDS = (
+    "عاجل",
+    "مهم جدا",
+    "خسار", "خساير",
+    "فقدت", "فقدان", "ضاع", "ضاعت",
+    "سحب", "استرجاع", "استرداد", "استرجع",
+    "لم يصل", "لم استلم",
+    "بلوك", "محظور", "حظر",
+)
+
+
+def detect_support_priority(text: str) -> int:
+    """يكشف رسائل الدعم عالية الأولوية (استعجال/خسارة/سحب/حظر...) — 1 أو 0."""
+    normalized = _norm_faq_text(text)
+    if not normalized:
+        return 0
+    for keyword in _PRIORITY_KEYWORDS:
+        if keyword in normalized:
+            return 1
+    return 0
+
+
+def add_ticket_update(msg_id: int, text: str) -> Optional[dict]:
+    """يُضيف متابعة من العضو إلى تذكرته ويعيد فتحها لفريق الدعم."""
+    text = (text or "").strip()[:4000]
+    msg = get_support_message(msg_id)
+    if msg is None or not text:
+        return msg
+    prev = (msg.get("ticketUpdates") or "").strip()
+    new = f"{prev}\n\n📎 متابعة من العضو:\n{text}".strip()[:8000]
+    with get_connection() as conn:
+        conn.execute(
+            """UPDATE support_messages
+               SET ticketUpdates = ?, status = 'new',
+                   satisfaction = 'reopened', repliedAt = NULL
+               WHERE id = ?""",
+            (new, msg_id),
+        )
+        conn.commit()
+    return get_support_message(msg_id)
+
+
 # ── قوالب الردود الجاهزة ─────────────────────────────
-def add_support_template(title: str, body: str, msg_type: str = "") -> dict:
+def add_support_template(
+    title: str, body: str, msg_type: str = "", keywords: str = ""
+) -> dict:
     title = (title or "").strip()[:100]
     body = (body or "").strip()[:4000]
     msg_type = (msg_type or "").strip()[:100]
+    keywords = (keywords or "").strip()[:1000]
     with get_connection() as conn:
         cursor = conn.execute(
-            "INSERT INTO support_templates (title, body, type, createdAt) "
-            "VALUES (?, ?, ?, ?)",
-            (title, body, msg_type, now_iso()),
+            "INSERT INTO support_templates (title, body, type, keywords, createdAt) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (title, body, msg_type, keywords, now_iso()),
         )
         conn.commit()
-        return {"id": cursor.lastrowid, "title": title, "body": body, "type": msg_type}
+        return {
+            "id": cursor.lastrowid,
+            "title": title,
+            "body": body,
+            "type": msg_type,
+            "keywords": keywords,
+        }
 
 
 def get_support_templates(msg_type: str = "") -> list[dict]:
@@ -658,17 +1062,25 @@ def get_support_templates(msg_type: str = "") -> list[dict]:
     with get_connection() as conn:
         if msg_type:
             rows = conn.execute(
-                "SELECT id, title, body, type FROM support_templates "
+                "SELECT * FROM support_templates "
                 "WHERE type = ? OR type = '' "
                 "ORDER BY (type = '') ASC, id DESC",
                 (msg_type,),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT id, title, body, type FROM support_templates "
+                "SELECT * FROM support_templates "
                 "ORDER BY id DESC"
             ).fetchall()
     return [_row_to_dict(r) for r in rows]
+
+
+def get_support_template(template_id: int) -> Optional[dict]:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM support_templates WHERE id = ?", (template_id,)
+        ).fetchone()
+    return _row_to_dict(row) if row else None
 
 
 def delete_support_template(template_id: int) -> bool:
@@ -678,6 +1090,96 @@ def delete_support_template(template_id: int) -> bool:
         )
         conn.commit()
     return cursor.rowcount > 0
+
+
+def set_support_template_enabled(template_id: int, enabled: bool) -> Optional[dict]:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "UPDATE support_templates SET enabled = ? WHERE id = ?",
+            (1 if enabled else 0, template_id),
+        )
+        conn.commit()
+    if cursor.rowcount == 0:
+        return None
+    return get_support_template(template_id)
+
+
+def bump_template_hits(template_id: int) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE support_templates SET hits = hits + 1 WHERE id = ?",
+            (template_id,),
+        )
+        conn.commit()
+
+
+# ── المطابقة التلقائية الذكية للقوالب ─────────────────────
+def support_template_keywords(template: dict) -> list[str]:
+    """كلمات القالب المفتاحية بعد التطبيع (تقبل الفواصل العربية / الإنجليزية / السطر الجديد)."""
+    raw = template.get("keywords") or ""
+    parts = [raw]
+    for sep in _FAQ_SEPARATORS:
+        parts = [piece for part in parts for piece in part.split(sep)]
+    return [_norm_faq_text(p) for p in parts if p.strip()]
+
+
+def score_support_template(text: str, template: dict) -> int:
+    """عدد كلمات القالب المفتاحية الموجودة داخل النص (بعد التطبيع)."""
+    normalized = _norm_faq_text(text)
+    if not normalized:
+        return 0
+    score = 0
+    for keyword in support_template_keywords(template):
+        if keyword and keyword in normalized:
+            score += 1
+    return score
+
+
+def match_support_template(
+    text: str, msg_type: str = "", threshold: int = 1
+) -> Optional[dict]:
+    """أقرب قالب مطابق للرسالة:
+
+    - يفحص قوالب فئة الرسالة فقط (msg_type) ثم القوالب العامة (type = '')؛
+    - إن لم تُحدد فئة يفحص كل القوالب المفعلة؛
+    - القالب "الأقرب" = الأعلى عدداً من الكلمات المفتاحية المطابقة داخل النص؛
+    - عند التعادل تُفضَّل القوالب الخاصة بالنوع المطابق، ثم الأحدث.
+    - لا يُردّ إلا إذا تجاوز عدد الكلمات المطابقة العتبة (الافتراضي 1).
+    """
+    normalized = _norm_faq_text(text)
+    if not normalized:
+        return None
+    best: Optional[dict] = None
+    best_score = 0
+    best_exact_type = False
+    for template in get_support_templates():
+        if not template.get("enabled", 1):
+            continue
+        ttype = (template.get("type") or "").strip()
+        if msg_type and ttype and ttype != msg_type:
+            continue
+        score = score_support_template(normalized, template)
+        if score < threshold:
+            continue
+        exact_type = bool(msg_type) and ttype == msg_type
+        if best is None or score > best_score or (
+            score == best_score and exact_type and not best_exact_type
+        ):
+            best = template
+            best_score = score
+            best_exact_type = exact_type
+    return best
+
+
+def auto_reply_for(text: str, msg_type: str = "") -> Optional[dict]:
+    """يُرجع القالب الذي سيُرد به تلقائياً (معه نتيجة المطابقة)، أو None."""
+    template = match_support_template(text, msg_type)
+    if template is None:
+        return None
+    return {
+        "template": template,
+        "score": score_support_template(text, template),
+    }
 
 
 # ── حظر الدعم المؤقت ────────────────────────────────
@@ -791,6 +1293,61 @@ def clear_access_logs() -> int:
     return cursor.rowcount
 
 
+# ── سجل تعديلات الأدمن ─────────────────────────────────
+def add_admin_action(
+    action: str,
+    detail: str = "",
+    admin: str = "",
+) -> int:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "INSERT INTO admin_actions (action, detail, admin, createdAt) "
+            "VALUES (?, ?, ?, ?)",
+            (action, detail or "", admin or "", now_iso()),
+        )
+        conn.commit()
+    return cursor.lastrowid
+
+
+def get_admin_actions(
+    limit: int = 200,
+    action: str = "",
+) -> list[dict]:
+    limit = max(1, min(1000, int(limit)))
+    if action:
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM admin_actions WHERE action = ? "
+                "ORDER BY id DESC LIMIT ?",
+                (action, limit),
+            ).fetchall()
+    else:
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM admin_actions ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def count_admin_actions() -> dict[str, int]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT action, COUNT(*) AS c FROM admin_actions GROUP BY action"
+        ).fetchall()
+    counts: dict[str, int] = {}
+    for row in rows:
+        counts[row["action"]] = row["c"]
+    return counts
+
+
+def clear_admin_actions() -> int:
+    with get_connection() as conn:
+        cursor = conn.execute("DELETE FROM admin_actions")
+        conn.commit()
+    return cursor.rowcount
+
+
 # ── سجل الإشعارات العامة ────────────────────────────────
 def add_broadcast(
     scope: str,
@@ -820,158 +1377,349 @@ def get_last_broadcasts(limit: int = 10) -> list[dict]:
     return [_row_to_dict(r) for r in rows]
 
 
-# ── دخولات القناة (الصفقات/التحديثات) ────────────────────
-def add_entry(
-    direction: str = "",
-    price_level: str = "",
-    stop_points: int = 0,
-    condition_text: str = "",
-    image_path: Optional[str] = None,
-    image_hash: str = "",
-    image_file_id: str = "",
-    raw_text: str = "",
-    source_message_id: Optional[int] = None,
-) -> dict:
-    now = now_iso()
+# ── ردود الأسئلة الشائعة (تلقائي) ───────────────────────
+_FAQ_SEPARATORS = (",", "،", "\n")
+
+
+def _norm_faq_text(text: str) -> str:
+    """تطبيع نص عربي/إنجليزي للمطابقة: تشكيل، همزات، ألف/ياء/تاء مربوطة."""
+    text = (text or "").lower().strip()
+    for mark in range(0x064B, 0x0653):
+        text = text.replace(chr(mark), "")
+    for src, dst in (
+        ("أ", "ا"),
+        ("إ", "ا"),
+        ("آ", "ا"),
+        ("ى", "ي"),
+        ("ة", "ه"),
+        ("ؤ", "و"),
+        ("ئ", "ي"),
+        ("ٱ", "ا"),
+    ):
+        text = text.replace(src, dst)
+    return " ".join(text.split())
+
+
+def add_faq_rule(keywords: str, reply: str) -> dict:
+    keywords = (keywords or "").strip()
+    reply = (reply or "").strip()
     with get_connection() as conn:
         cursor = conn.execute(
-            """INSERT INTO entries
-               (direction, priceLevel, stopPoints, conditionText, imagePath,
-                imageHash, imageFileId, rawText, sourceMessageId, createdAt, updatedAt)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                direction, price_level, stop_points, condition_text,
-                image_path, image_hash, image_file_id, raw_text,
-                source_message_id, now, now,
-            ),
+            "INSERT INTO faq_rules (keywords, reply, enabled, hits, createdAt) "
+            "VALUES (?, ?, 1, 0, ?)",
+            (keywords, reply, now_iso()),
         )
         conn.commit()
-    return get_entry(cursor.lastrowid)
-
-
-def get_entry(entry_id: int) -> Optional[dict]:
-    with get_connection() as conn:
         row = conn.execute(
-            "SELECT * FROM entries WHERE id = ?", (entry_id,)
+            "SELECT * FROM faq_rules WHERE id = ?", (cursor.lastrowid,)
         ).fetchone()
-    return _row_to_dict(row) if row else None
+    return _row_to_dict(row)
 
 
-def get_entries(status: str = "") -> list[dict]:
-    if status:
-        with get_connection() as conn:
-            rows = conn.execute(
-                "SELECT * FROM entries WHERE status = ? ORDER BY id DESC",
-                (status,),
-            ).fetchall()
-    else:
-        with get_connection() as conn:
-            rows = conn.execute(
-                "SELECT * FROM entries ORDER BY id DESC"
-            ).fetchall()
-    return [_row_to_dict(r) for r in rows]
-
-
-def update_entry(entry_id: int, **fields) -> Optional[dict]:
-    allowed = {
-        "direction", "priceLevel", "stopPoints", "conditionText",
-        "status", "imagePath", "imageHash", "imageFileId", "rawText",
-    }
-    updates = {k: v for k, v in fields.items() if k in allowed}
-    if not updates:
-        return get_entry(entry_id)
-    sets = ", ".join(f"{col} = ?" for col in updates)
-    values = list(updates.values())
+def delete_faq_rule(rule_id: int) -> bool:
     with get_connection() as conn:
-        conn.execute(
-            f"UPDATE entries SET {sets}, updatedAt = ? WHERE id = ?",
-            (*values, now_iso(), entry_id),
-        )
-        conn.commit()
-    return get_entry(entry_id)
-
-
-def delete_entry(entry_id: int) -> bool:
-    with get_connection() as conn:
-        conn.execute("DELETE FROM entry_updates WHERE entryId = ?", (entry_id,))
-        cursor = conn.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
+        cursor = conn.execute("DELETE FROM faq_rules WHERE id = ?", (rule_id,))
         conn.commit()
     return cursor.rowcount > 0
 
 
-def add_entry_update(
-    entry_id: int,
-    kind: str = "note",
-    value: str = "",
-    price: str = "",
-    image_path: Optional[str] = None,
-    image_hash: str = "",
-    raw_text: str = "",
-    source_message_id: Optional[int] = None,
-) -> dict:
-    with get_connection() as conn:
-        cursor = conn.execute(
-            """INSERT INTO entry_updates
-               (entryId, kind, value, price, imagePath, imageHash, rawText,
-                sourceMessageId, createdAt)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                entry_id, kind, value, price, image_path, image_hash,
-                raw_text, source_message_id, now_iso(),
-            ),
-        )
-        conn.commit()
-    return get_entry_update(cursor.lastrowid)
-
-
-def get_entry_update(update_id: int) -> Optional[dict]:
-    with get_connection() as conn:
-        row = conn.execute(
-            "SELECT * FROM entry_updates WHERE id = ?", (update_id,)
-        ).fetchone()
-    return _row_to_dict(row) if row else None
-
-
-def get_entry_updates(entry_id: int) -> list[dict]:
+def get_faq_rules() -> list[dict]:
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT * FROM entry_updates WHERE entryId = ? ORDER BY id ASC",
-            (entry_id,),
+            "SELECT * FROM faq_rules ORDER BY id ASC"
         ).fetchall()
     return [_row_to_dict(r) for r in rows]
 
 
-def find_entry_by_image(image_hash: str, window_minutes: int = 60 * 24) -> Optional[dict]:
-    """يبحث عن دخول نشط بنفس صورة الدخول (نفس المخطط/السهم)."""
-    cutoff = (utcnow() - timedelta(minutes=window_minutes)).isoformat()
-    if not image_hash:
+def _faq_keywords(rule: dict) -> list[str]:
+    raw = rule.get("keywords") or ""
+    parts = [raw]
+    for sep in _FAQ_SEPARATORS:
+        parts = [piece for part in parts for piece in part.split(sep)]
+    return [_norm_faq_text(p) for p in parts if p.strip()]
+
+
+def match_faq(text: str) -> Optional[dict]:
+    """أول قاعدة مفعّلة تحتوي أي من كلماتها المفتاحية داخل النص، إن وُجدت."""
+    normalized = _norm_faq_text(text)
+    if not normalized:
+        return None
+    for rule in get_faq_rules():
+        if not rule.get("enabled"):
+            continue
+        for keyword in _faq_keywords(rule):
+            if keyword and keyword in normalized:
+                return rule
+    return None
+
+
+def bump_faq_hits(rule_id: int) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE faq_rules SET hits = hits + 1 WHERE id = ?", (rule_id,)
+        )
+        conn.commit()
+
+
+# ── مراقبة القنوات المقلّدة ────────────────────────────
+
+
+def clean_username(username: str) -> str:
+    """تطبيع يوزرنيم دون @، أحرف صغيرة، فصله عن أي نص جانبي."""
+    raw = (username or "").strip().lstrip("@")
+    for sep in ("/", "?", " "):
+        raw = raw.split(sep, 1)[0]
+    return raw.lower()
+
+
+def add_clone_watch(username: str, added_by: str = "") -> Optional[dict]:
+    uname = clean_username(username)
+    if not uname or len(uname) < 4 or len(uname) > 32:
         return None
     with get_connection() as conn:
-        row = conn.execute(
-            "SELECT * FROM entries WHERE imageHash = ? AND createdAt > ? "
-            "AND status IN ('ACTIVE', 'INSURED') ORDER BY id DESC LIMIT 1",
-            (image_hash, cutoff),
+        exists = conn.execute(
+            "SELECT id FROM clone_watch WHERE username = ?", (uname,)
         ).fetchone()
-    return _row_to_dict(row) if row else None
+        if exists:
+            return _row_to_dict(
+                conn.execute(
+                    "SELECT * FROM clone_watch WHERE id = ?", (exists["id"],)
+                ).fetchone()
+            )
+        cursor = conn.execute(
+            "INSERT INTO clone_watch (username, addedBy, addedAt) VALUES (?, ?, ?)",
+            (uname, (added_by or "")[:200], now_iso()),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM clone_watch WHERE id = ?", (cursor.lastrowid,)
+        ).fetchone()
+    return _row_to_dict(row)
 
 
-def latest_entry(window_minutes: int = 60 * 6) -> Optional[dict]:
-    cutoff = (utcnow() - timedelta(minutes=window_minutes)).isoformat()
+def remove_clone_watch(watch_id: int) -> bool:
     with get_connection() as conn:
-        row = conn.execute(
-            "SELECT * FROM entries WHERE createdAt > ? "
-            "AND status IN ('ACTIVE', 'INSURED') ORDER BY id DESC LIMIT 1",
-            (cutoff,),
-        ).fetchone()
-    return _row_to_dict(row) if row else None
+        cursor = conn.execute("DELETE FROM clone_watch WHERE id = ?", (watch_id,))
+        conn.commit()
+    return cursor.rowcount > 0
 
 
-def count_entries() -> dict[str, int]:
+def list_clone_watch() -> list[dict]:
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT status, COUNT(*) AS c FROM entries GROUP BY status"
+            "SELECT * FROM clone_watch ORDER BY id ASC"
         ).fetchall()
-    counts = {"ACTIVE": 0, "INSURED": 0, "STOPPED": 0, "CLOSED": 0}
-    for row in rows:
-        counts[row["status"]] = row["c"]
-    return counts
+    return [_row_to_dict(r) for r in rows]
+
+
+def mark_clone_watch_checked(watch_id: int, unreachable: int = 0) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE clone_watch SET lastCheckedAt = ?, unreachable = ? WHERE id = ?",
+            (now_iso(), unreachable, watch_id),
+        )
+        conn.commit()
+
+
+def record_clone_alert(
+    username: str,
+    channel_id: Optional[int],
+    title: str,
+    title_ratio: float,
+    user_sim: float,
+    photo_score: float,
+    score: float,
+) -> dict:
+    """يسجّل/يحدّث تنبيهاً لهذا اليوزر (حسب الاسم، لا يتكرر). يَعيد
+    {'is_new': هل تنبيه جديد، 'alert': سجل التنبيه}. التنبيه المؤكَّد من
+    الأدمن يبقى 'confirmed' مهما تكرر الرصد."""
+    uname = clean_username(username)
+    now = now_iso()
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM clone_alerts WHERE username = ? ORDER BY id DESC LIMIT 1",
+            (uname,),
+        ).fetchone()
+        is_new = False
+        if row is None:
+            cursor = conn.execute(
+                """INSERT INTO clone_alerts
+                   (username, channelId, title, titleRatio, userSim, photoScore,
+                    score, status, firstSeenAt, lastSeenAt)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 'new', ?, ?)""",
+                (uname, channel_id, (title or "")[:200], title_ratio, user_sim,
+                 photo_score, score, now, now),
+            )
+            conn.commit()
+            alert = _row_to_dict(
+                conn.execute(
+                    "SELECT * FROM clone_alerts WHERE id = ?",
+                    (cursor.lastrowid,),
+                ).fetchone()
+            )
+            is_new = True
+        else:
+            status = row["status"]
+            if status == "confirmed":
+                status = "confirmed"
+            elif status in ("ignored", "resolved"):
+                # عاد التطابق من جديد → تنبيه جديد بقرار جديد
+                status = "new"
+                is_new = True
+            conn.execute(
+                """UPDATE clone_alerts SET channelId = ?, title = ?,
+                   titleRatio = ?, userSim = ?, photoScore = ?, score = ?,
+                   status = ?, lastSeenAt = ? WHERE id = ?""",
+                (channel_id, (title or "")[:200], title_ratio, user_sim,
+                 photo_score, score, status, now, row["id"]),
+            )
+            conn.commit()
+            alert = _row_to_dict(
+                conn.execute(
+                    "SELECT * FROM clone_alerts WHERE id = ?", (row["id"],)
+                ).fetchone()
+            )
+    return {"is_new": is_new, "alert": alert}
+
+
+def resolve_open_alert(username: str) -> None:
+    """يرصد عدم التطابق دورياً → يَحسم التنبيهات المفتوحة (الجديدة) للمراقب."""
+    uname = clean_username(username)
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE clone_alerts SET status = 'resolved', lastSeenAt = ? "
+            "WHERE username = ? AND status = 'new'",
+            (now_iso(), uname),
+        )
+        conn.commit()
+
+
+def resolve_clone_alert(alert_id: int, status: int | str) -> bool:
+    if status not in ("confirmed", "ignored", "resolved"):
+        return False
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "UPDATE clone_alerts SET status = ? WHERE id = ?", (status, alert_id)
+        )
+        conn.commit()
+    return cursor.rowcount > 0
+
+
+def list_clone_alerts(status: Optional[str] = None, limit: int = 100) -> list[dict]:
+    limit = max(1, min(500, int(limit)))
+    with get_connection() as conn:
+        if status:
+            rows = conn.execute(
+                "SELECT * FROM clone_alerts WHERE status = ? "
+                "ORDER BY id DESC LIMIT ?",
+                (status, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM clone_alerts ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+# ── جدولة النشر اليومي للقناة ───────────────────────────
+# أيام الأسبوع مخزَّنة كسلسلة أرقام (بدون فواصل): 0=الأحد ... 6=السبت.
+# "0123456" تعني كل الأيام. التطابق مع اليوم الحالي: (weekday() + 1) % 7.
+
+
+def _post_slot_key() -> str:
+    """مفتاح الجولة الحالية: 'YYYY-MM-DD HH:MM' بالتوقيت المحلي للخادم
+    (لوحة التحكم تعرض التوقيت المحلي أيضاً، فالمواعيد بمنطق الأدمن نفسه)."""
+    return datetime.now().strftime("%Y-%m-%d %H:%M")
+
+
+def _post_weekday_digit() -> int:
+    """رقم اليوم في تخزيننا: 0=الأحد ... 6=السبت."""
+    return (datetime.now().weekday() + 1) % 7
+
+
+def add_scheduled_post(
+    title: str, body: str, photo: Optional[str], time: str, days: str, pin: int
+) -> dict:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """INSERT INTO scheduled_posts
+               (title, body, photo, enabled, time, days, pin, createdAt)
+               VALUES (?, ?, ?, 1, ?, ?, ?, ?)""",
+            ((title or "").strip()[:200], body or "", photo,
+             time, days or "0123456", 1 if pin else 0, now_iso()),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM scheduled_posts WHERE id = ?", (cursor.lastrowid,)
+        ).fetchone()
+    return _row_to_dict(row)
+
+
+def get_scheduled_posts() -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM scheduled_posts ORDER BY time ASC, id ASC"
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def get_scheduled_post(post_id: int) -> Optional[dict]:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM scheduled_posts WHERE id = ?", (post_id,)
+        ).fetchone()
+    return _row_to_dict(row) if row else None
+
+
+def update_scheduled_post(post_id: int, **fields) -> Optional[dict]:
+    if not fields:
+        return get_scheduled_post(post_id)
+    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    with get_connection() as conn:
+        conn.execute(
+            f"UPDATE scheduled_posts SET {set_clause} WHERE id = ?",
+            (*fields.values(), post_id),
+        )
+        conn.commit()
+    return get_scheduled_post(post_id)
+
+
+def delete_scheduled_post(post_id: int) -> bool:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "DELETE FROM scheduled_posts WHERE id = ?", (post_id,)
+        )
+        conn.commit()
+    return cursor.rowcount > 0
+
+
+def get_due_scheduled_posts() -> list[dict]:
+    """الرسائل المجدولة المفعّلة التي حان موعدها الآن ولم تُنشر في هذه
+    الجولة (lastRunKey مختلف عن مفتاح اليوم/الساعة)، حسب التوقيت المحلي."""
+    slot = _post_slot_key()
+    hm = datetime.now().strftime("%H:%M")
+    wd = str(_post_weekday_digit())
+    with get_connection() as conn:
+        rows = conn.execute(
+            """SELECT * FROM scheduled_posts
+               WHERE enabled = 1 AND time = ?
+                 AND INSTR(days, ?) > 0
+                 AND (lastRunKey IS NULL OR lastRunKey <> ?)
+               ORDER BY id ASC""",
+            (hm, wd, slot),
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def mark_scheduled_post_sent(post_id: int, ok: bool, note: str) -> None:
+    """يسجّل نتيجة محاولة اليوم/الساعة: يُستهلك الموعد مهما كانت النتيجة
+    (لا إعادة محاولة لانهائية في نفس الموعد)، ويُحصى النجاح فقط."""
+    with get_connection() as conn:
+        conn.execute(
+            """UPDATE scheduled_posts
+               SET lastRunKey = ?, lastResult = ?,
+                   sentCount = sentCount + ?
+               WHERE id = ?""",
+            (_post_slot_key(), (note or "")[:500], 1 if ok else 0, post_id),
+        )
+        conn.commit()

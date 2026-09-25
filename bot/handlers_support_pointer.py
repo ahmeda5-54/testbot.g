@@ -38,6 +38,8 @@ async def point_to_support_bot_cb(callback: CallbackQuery) -> None:
         return
     # تحويل مباشر: استبدال زر الرسالة القديمة برابط بوت الدعم فوراً —
     # لا رسالة وسيطة، يضغطها فينتقل مباشرة لبوت الدعم المحدد.
+    # ملاحظة: لا يُنشر أي شيء في القناة — تبقى القناة نظيفة، والتواصل
+    # يتم حصراً عبر بوت الدعم بالخاص.
     try:
         await callback.message.edit_reply_markup(reply_markup=SUPPORT_MOVE_MARKUP())
     except Exception:

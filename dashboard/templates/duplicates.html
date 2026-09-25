@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}الحسابات المكررة{% endblock %}
+
+{% block page_title %}الحسابات المكررة والمحظورة{% endblock %}
+{% block topbar_actions %}
+<a class="btn btn-outline" href="{{ url_for('index') }}">↩ رجوع للقائمة</a>
+{% endblock %}
+
+{% block content %}
+<section class="hero glass">
+  <div class="hero-h">
+    <div>
+      <h2>كشف الحسابات المكررة ومراقبة الأرقام المحظورة</h2>
+      <small>
+        معلومات إرشادية فقط — القرار دائماً بيدك. «إعادة دخول محتملة» تعني أن
+        أصحاب الرقم السابقين منتهيون أو مُزالون (شخص أعاد التسجيل بعد انتهاء اشتراكه).
+        التكرار وحده لا يمنع التسجيل؛ الحظر اليدوي فقط هو الذي يمنعه.
+      </small>
+    </div>
+    <div class="chips" style="margin:0;">
+      <span class="chip {{ 'chip-warn' if dupes_active else 'chip-neutral' }}">تكرار نشط: {{ dupes_active }}</span>
+      <span class="chip chip-neutral">إعادة دخول محتملة: {{ dupes_past }}</span>
+      <span class="chip {{ 'chip-bad' if blocked|length else 'chip-ok' }}">محظورة: {{ blocked|length }}</span>
+    </div>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head"><h3>الحسابات المكررة ({{ groups|length }})</h3></div>
+  {% if groups %}
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>رقم الحساب</th>
+          <th>عدد الأعضاء</th>
+          <th>النوع</th>
+          <th>الأعضاء</th>
+          <th>إجراء</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for g in groups %}
+        <tr>
+          <td><code>{{ g.account }}</code></td>
+          <td><span class="pill-badge">{{ g.count }}</span></td>
+          <td>
+            {% if g.kind == 'active' %}
+            <span class="chip chip-warn">تكرار نشط — أحدهم في القناة حالياً</span>
+            {% else %}
+            <span class="chip chip-neutral">إعادة دخول محتملة (السابقون منتهيون/مُزالون)</span>
+            {% endif %}
+          </td>
+          <td>
+            {% for o in g.owners %}
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:3px 0;">
+              <a class="btn btn-sm btn-outline" href="{{ url_for('member_detail', user_id=o.telegramUserId) }}">
+                {{ o.telegramName or ('@' + o.telegramUsername if o.telegramUsername else o.telegramUserId) }}
+              </a>
+              <span class="status" style="--c: {{ STATUS_COLORS[o.status] }}">{{ STATUS_LABELS[o.status] }}</span>
+              {% if o.inGroup == 1 %}<span class="chip chip-ok">بالقناة</span>
+              {% elif o.inGroup == 0 %}<span class="chip chip-bad">خارجها</span>{% endif %}
+            </div>
+            {% endfor %}
+          </td>
+          <td>
+            <form method="post" action="{{ url_for('block_account') }}">
+              <input type="hidden" name="account" value="{{ g.account }}">
+              <input type="hidden" name="next" value="{{ url_for('duplicates_page') }}">
+              <input class="search-input" style="width:150px;" name="reason" placeholder="سبب الحظر (اختياري)">
+              <button class="btn btn-danger btn-sm" type="submit"
+                      onclick="return confirm('حظر هذا الرقم ومنع تسجيله مستقبلاً في التحقق؟');">حظر الرقم</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty">
+    <div class="ic"><svg viewBox="0 0 24 24"><path d="M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0z"/><path d="M12 14a8 8 0 0 0-7 4M12 14a8 8 0 0 1 7 4"/></svg></div>
+    <b>لا توجد حسابات مكررة حالياً</b>
+    <small>كل رقم مسجل عند عضو واحد.</small>
+  </div>
+  {% endif %}
+</section>
+
+<section class="card">
+  <div class="card-head"><h3>الأرقام المحظورة ({{ blocked|length }})</h3></div>
+  {% if blocked %}
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>الرقم</th>
+          <th>السبب</th>
+          <th>تاريخ الحظر</th>
+          <th>إجراء</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for b in blocked %}
+        <tr>
+          <td><code>{{ b.account_raw }}</code></td>
+          <td>{{ b.reason or '-' }}</td>
+          <td>{{ fmt(b.createdAt) }}</td>
+          <td>
+            <form method="post" action="{{ url_for('unblock_account', block_id=b.id) }}">
+              <input type="hidden" name="next" value="{{ url_for('duplicates_page') }}">
+              <button class="btn btn-outline btn-sm" type="submit">إلغاء الحظر</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty">
+    <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 4 3.4 7.4 8 9 4.6-1.6 8-5 8-9V6z"/></svg></div>
+    <b>لا توجد أرقام محظورة</b>
+    <small>الأرقام المحظورة تظهر هنا.</small>
+  </div>
+  {% endif %}
+</section>
+
+<section class="card">
+  <div class="card-head"><h3>حظر رقم يدوياً</h3></div>
+  <form class="settings-form" method="post" action="{{ url_for('block_account') }}">
+    <label for="manual_account">رقم الحساب</label>
+    <input id="manual_account" name="account" required placeholder="مثال: 123456789">
+    <label for="manual_reason">السبب (اختياري)</label>
+    <input id="manual_reason" name="reason" placeholder="سبب الحظر">
+    <input type="hidden" name="next" value="{{ url_for('duplicates_page') }}">
+    <button class="btn btn-danger" type="submit">حظر الرقم</button>
+  </form>
+</section>
+{% endblock %}

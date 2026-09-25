@@ -1,6 +1,6 @@
 import config
 import db
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot import flow, texts
 
@@ -47,7 +47,7 @@ async def send_verify_message(bot) -> tuple[bool, int | None, str, str]:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=texts.BTN_START, url=config.VERIFY_URL
+                    text=texts.BTN_START, url=config.verify_url()
                 )
             ],
             [support_button()],
@@ -100,3 +100,39 @@ async def send_verify_message(bot) -> tuple[bool, int | None, str, str]:
         info.append(f"حُذفت {deleted} رسالة قديمة من القناة")
 
     return True, msg.message_id, "؛ ".join(errors), "؛ ".join(info)
+
+
+async def publish_scheduled_post(bot, post) -> tuple[bool, str]:
+    """ينشر رسالة مجدولة (نص أو صورة) في القناة، مع تثبيت اختياري.
+    يرجع (ok, note) حيث note تحمل تحذير التثبيت أو سبب الفشل."""
+    caption = (post.get("body") or "").strip()
+    try:
+        photo_path = None
+        if post.get("photo"):
+            candidate = config.UPLOADS_DIR / post["photo"]
+            if candidate.exists():
+                photo_path = candidate
+        if photo_path is not None:
+            msg = await bot.send_photo(
+                config.CHANNEL_ID,
+                FSInputFile(str(photo_path)),
+                caption=caption or None,
+            )
+        else:
+            msg = await bot.send_message(
+                config.CHANNEL_ID, caption or "—"
+            )
+    except Exception as exc:
+        return False, str(exc)
+
+    note = ""
+    if post.get("pin"):
+        try:
+            await bot.pin_chat_message(
+                chat_id=config.CHANNEL_ID,
+                message_id=msg.message_id,
+                disable_notification=False,
+            )
+        except Exception as exc:
+            note = f"التثبيت فشل: {exc}"
+    return True, note

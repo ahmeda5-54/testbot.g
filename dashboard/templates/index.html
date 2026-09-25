@@ -5,67 +5,75 @@
 {% block page_title %}لوحة التحكم — مشتركون و تحقق{% endblock %}
 
 {% block topbar_actions %}
-<a class="btn btn-outline" href="{{ url_for('notifications') }}">📢 إشعار عام</a>
+<a class="btn btn-outline" href="{{ url_for('settings_page', _anchor='broadcast') }}">📢 إشعار عام</a>
 <a class="btn btn-review" href="{{ url_for('support_page') }}">🛟 الدعم ({{ support_new }})</a>
 {% endblock %}
 
 {% block content %}
-<section class="card hero-card">
-  <div class="hero-head">
-    <div class="hero-title">
-      <span class="hero-ic">📊</span>
+<section class="hero glass">
+  <div class="hero-h">
+    <div><h2>نظرة عامة على النظام</h2><small>آخر فحص كامل: {{ fmt(stats.last_full_check) if stats.last_full_check else 'لم يُفحص بعد' }}</small></div>
+    <div class="act-wrap">
       <div>
-        <h3>نظرة عامة على النظام</h3>
-        <p class="settings-hint">آخر فحص كامل: {{ fmt(stats.last_full_check) if stats.last_full_check else 'لم يُفحص بعد' }}</p>
+        <form method="post" action="{{ url_for('check_members_all') }}">
+          <button class="btn pri" type="submit">⚡ فحص الحضور</button>
+        </form>
+        <span>لكل الأعضاء</span>
+      </div>
+      <div>
+        <form method="post" action="{{ url_for('post_message') }}"
+              onsubmit="return confirm('نشر وتثبيت رسالة التحقق في القناة؟');">
+          <button class="btn" type="submit">📌 نشر وتثبيت</button>
+        </form>
+        <span>رسالة القناة</span>
       </div>
     </div>
-    <div class="quick-actions">
-      <form class="quick-btn" method="post" action="{{ url_for('check_members_all') }}">
-        <button class="btn btn-sm btn-check" type="submit">⚡ فحص الحضور</button>
-        <small class="quick-sub">لكل الأعضاء</small>
-      </form>
-      <form class="quick-btn" method="post" action="{{ url_for('post_message') }}"
-            onsubmit="return confirm('نشر وتثبيت رسالة التحقق في القناة؟');">
-        <button class="btn btn-sm btn-post" type="submit">📌 نشر وتثبيت</button>
-        <small class="quick-sub">رسالة القناة</small>
-      </form>
-    </div>
   </div>
-  <div class="hero-grid">
-    <div class="hero-stat">
-      <span class="hero-label">إجمالي المشتركين</span>
-      <span class="hero-num">{{ counts['ALL'] }}</span>
-      <span class="hero-sub">أعضاء المجموعة: {{ stats.group_total if stats.group_total is not none else '—' }}</span>
+
+  <div class="stats" id="hero-stats">
+    <div class="stat" style="--c:#2aabee">
+      <div class="ic"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2 21a7 7 0 0 1 14 0M17 4.5a3.5 3.5 0 0 1 0 7M22 21a7 7 0 0 0-4-6.3"/></svg></div>
+      <h3>إجمالي المشتركين</h3>
+      <div class="num">{{ counts['ALL'] }}</div>
+      <small>أعضاء المجموعة: {{ stats.group_total if stats.group_total is not none else '—' }}</small>
     </div>
-    <div class="hero-stat">
-      <span class="hero-label">طلبات جديدة / مراجعة</span>
-      <span class="hero-num">{{ counts['SUBMITTED'] }} <i>/</i> {{ counts['UNDER_REVIEW'] }}</span>
-      <span class="hero-sub">بانتظار قرار المشرف</span>
+    <div class="stat" style="--c:#fbbf24">
+      <div class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+      <h3>طلبات جديدة / مراجعة</h3>
+      <div class="num">{{ counts['SUBMITTED'] }}<i>/</i>{{ counts['UNDER_REVIEW'] }}</div>
+      <small>بانتظار قرار المشرف</small>
     </div>
-    <div class="hero-stat">
-      <span class="hero-label">مقبول / مرفوض</span>
-      <span class="hero-num">{{ counts['VERIFIED'] }} <i>/</i> {{ counts['REJECTED'] }}</span>
-      <span class="hero-sub">داخل المجموعة الآن: {{ stats.in_group }}</span>
+    <div class="stat" style="--c:#34d399">
+      <div class="ic"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></div>
+      <h3>مقبول / مرفوض</h3>
+      <div class="num"><span class="g">{{ counts['VERIFIED'] }}</span><i>/</i><span class="r">{{ counts['REJECTED'] }}</span></div>
+      <small>داخل المجموعة الآن: {{ stats.in_group }}</small>
     </div>
-    <div class="hero-stat">
-      <span class="hero-label">منتهية / غير مكتمل</span>
-      <span class="hero-num">{{ counts['EXPIRED'] }} <i>/</i> {{ stats.incomplete }}</span>
-      <span class="hero-sub">لم يبدأوا (تقريبي): {{ stats.not_started if stats.not_started is not none else '—' }}</span>
+    <div class="stat" style="--c:#7c5cff">
+      <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg></div>
+      <h3>منتهية / غير مكتمل</h3>
+      <div class="num">{{ counts['EXPIRED'] }}<i>/</i>{{ stats.incomplete }}</div>
+      <small>لم يبدأوا (تقريبي): {{ stats.not_started if stats.not_started is not none else '—' }}</small>
     </div>
   </div>
 </section>
 
-<div class="filter-bar">
-  <input id="table-search" class="search-input" type="search"
-         placeholder="🔍 بحث سريع: الاسم أو @المعرف أو Telegram ID...">
-  <div class="pills">
-    {% for key, label in tabs %}
-      {% if key == 'roster' %}{% set c = counts['roster'] %}{% elif key == 'incomplete' %}{% set c = counts['incomplete'] %}{% elif key == 'all' %}{% set c = counts['ALL'] %}{% else %}{% set c = counts[key] %}{% endif %}
-      <a class="pill {{ 'active' if tab == key }}" href="{{ url_for('index', tab=key) }}">
-        {{ label }} <span class="pill-badge">{{ c }}</span>
-      </a>
-    {% endfor %}
-  </div>
+<label class="search">
+  <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+  <input id="table-search" type="search" placeholder="بحث سريع: الاسم أو @المعرّف أو Telegram ID...">
+</label>
+
+<div class="chips">
+  {% for key, label in tabs %}
+    <a class="chip {{ 'on' if tab == key }}" href="{{ url_for('index', tab=key) }}">
+      {{ label }}
+      {% if key == 'all' %}<em>{{ counts['ALL'] }}</em>
+      {% else %}<em>{{ counts[key] }}</em>{% endif %}
+    </a>
+  {% endfor %}
+  <a class="chip {{ 'on' if request.endpoint == 'duplicates_page' }}" href="{{ url_for('duplicates_page') }}">
+    🔄 الحسابات المكررة {% if dupe_count %}<em>{{ dupe_count }}</em>{% endif %}
+  </a>
 </div>
 
 {% if members %}
@@ -73,6 +81,7 @@
   <table class="data-table">
     <thead>
       <tr>
+        <th style="width:34px;"><input type="checkbox" id="select-all" title="تحديد الكل"></th>
         <th>الحالة</th>
         <th>المستخدم</th>
         <th>مكلم البوت؟</th>
@@ -88,8 +97,9 @@
     <tbody>
       {% for m in members %}
       <tr>
+        <td><input type="checkbox" class="row-check" value="{{ m.telegramUserId }}" title="تحديد هذا العضو"></td>
         <td>
-          <span class="status" style="background: {{ STATUS_COLORS[m.status] }}">
+          <span class="status" style="--c: {{ STATUS_COLORS[m.status] }}">
             {{ STATUS_LABELS[m.status] }}
           </span>
         </td>
@@ -112,7 +122,16 @@
           {% elif m.inGroup == 0 %}<span class="chip chip-bad">خارج</span>
           {% else %}<span class="chip chip-neutral">غير محدد</span>{% endif %}
         </td>
-        <td><code>{{ m.tradingAccountNumber or '—' }}</code></td>
+        <td>
+          <code>{{ m.tradingAccountNumber or '—' }}</code>
+          {% if m._blocked %}
+            <span class="chip chip-bad" title="رقم الحساب محظور للتسجيل من الإدارة">🔒 محظور</span>
+          {% elif m._dupe == 'active' %}
+            <span class="chip chip-warn" title="هذا الرقم مسجل عند أكثر من عضو وأحدهم نشط حالياً — راجع التفاصيل">🚨 مكرر ×{{ m._dupe_count }}</span>
+          {% elif m._dupe == 'past' %}
+            <span class="chip chip-neutral" title="مسجل سابقاً عند أعضاء منتهيين/مُزالين — قد يكون إعادة دخول بعد انتهاء الاشتراك">🔄 مكرر سابق</span>
+          {% endif %}
+        </td>
         <td>{{ m.brokerName or '—' }}</td>
         <td>{{ fmt(m.submittedAt) }}</td>
         <td>{{ fmt(m.deadlineAt) }}</td>
@@ -120,17 +139,6 @@
         <td>
           <div style="display:flex; gap:6px; flex-wrap:wrap;">
             <a class="btn btn-sm btn-outline" href="{{ url_for('member_detail', user_id=m.telegramUserId) }}">التفاصيل</a>
-            {% if tab == 'roster' %}
-              {% if m.status != 'REMOVED' %}
-              <form method="post" action="{{ url_for('remove_from_chat', user_id=m.telegramUserId) }}"
-                    onsubmit="return confirm('حذف {{ m.telegramName or m.telegramUserId }} من المجموعة؟');">
-                <input type="hidden" name="next" value="{{ url_for('index', tab='roster') }}">
-                <button class="btn btn-danger btn-sm">حذف من المجموعة</button>
-              </form>
-              {% else %}
-              <span class="chip chip-neutral">مُزال</span>
-              {% endif %}
-            {% endif %}
           </div>
         </td>
       </tr>
@@ -138,8 +146,37 @@
     </tbody>
   </table>
 </div>
+
+<div id="batch-bar" class="batch-bar" hidden>
+  <span class="batch-count">محدد: <b id="batch-count-num">0</b></span>
+  <form class="inline" method="post" action="{{ url_for('batch_approve') }}">
+    <input type="hidden" name="ids" class="b-ids">
+    <input type="hidden" name="next" value="{{ request.full_path }}">
+    <button class="btn btn-sm btn-success" type="submit">✔ قبول المحدد</button>
+  </form>
+  <form class="inline" method="post" action="{{ url_for('batch_reject') }}">
+    <input type="hidden" name="ids" class="b-ids">
+    <input type="hidden" name="reason" class="b-reason">
+    <input type="hidden" name="next" value="{{ request.full_path }}">
+    <button class="btn btn-sm btn-danger" type="submit">✖ رفض المحدد</button>
+  </form>
+  <form class="inline" method="post" action="{{ url_for('batch_remove') }}" data-confirm="إزالة المحددين من القناة بواسطة البوت؟">
+    <input type="hidden" name="ids" class="b-ids">
+    <input type="hidden" name="next" value="{{ request.full_path }}">
+    <button class="btn btn-sm btn-outline" type="submit">⛔ إزالة من القناة</button>
+  </form>
+  <form class="inline" method="post" action="{{ url_for('batch_delete') }}" data-confirm="⚠️ حذف سجلات المحددين نهائياً؟ يبقى العضو في المجموعة ويمكنه البدء من جديد.">
+    <input type="hidden" name="ids" class="b-ids">
+    <input type="hidden" name="next" value="{{ request.full_path }}">
+    <button class="btn btn-sm btn-danger" type="submit">🗑 حذف السجلات</button>
+  </form>
+</div>
 {% else %}
-<p class="empty">لا توجد سجلات في هذا التبويب.</p>
+<div class="empty">
+  <div class="ic"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div>
+  <b>لا توجد سجلات في هذا التبويب</b>
+  <small>ستظهر الطلبات هنا فور وصولها من البوت.</small>
+</div>
 {% endif %}
 {% endblock %}
 
@@ -154,5 +191,47 @@ if (searchBox) {
     });
   });
 }
+
+/* ── الإجراءات الجماعية: تحديد + شريط سفلي ثابت ── */
+const selectAll = document.getElementById('select-all');
+const batchBar = document.getElementById('batch-bar');
+const batchCount = document.getElementById('batch-count-num');
+
+function selectedIds() {
+  return Array.from(document.querySelectorAll('.row-check:checked')).map(cb => cb.value);
+}
+function syncBatch() {
+  const ids = selectedIds();
+  if (batchCount) batchCount.textContent = ids.length;
+  if (batchBar) batchBar.style.display = ids.length ? 'flex' : 'none';
+}
+if (selectAll) {
+  selectAll.addEventListener('change', () => {
+    document.querySelectorAll('.row-check').forEach(cb => { cb.checked = selectAll.checked; });
+    syncBatch();
+  });
+}
+document.querySelectorAll('.row-check').forEach(cb => {
+  cb.addEventListener('change', () => {
+    if (selectAll && !cb.checked) selectAll.checked = false;
+    syncBatch();
+  });
+});
+document.querySelectorAll('.batch-bar form').forEach(form => {
+  form.addEventListener('submit', (e) => {
+    const ids = selectedIds();
+    if (!ids.length) { e.preventDefault(); return; }
+    form.querySelector('.b-ids').value = ids.join(',');
+    const reasonInput = form.querySelector('.b-reason');
+    if (reasonInput) {
+      const reason = prompt('سبب الرفض (يُرسل لجميع المحددين):', '');
+      if (reason === null || !reason.trim()) { e.preventDefault(); return; }
+      reasonInput.value = reason.trim();
+    }
+    const confirmMsg = form.dataset.confirm;
+    if (confirmMsg && !confirm(confirmMsg)) { e.preventDefault(); return; }
+  });
+});
+syncBatch();
 </script>
 {% endblock %}

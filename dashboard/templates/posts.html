@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}جدولة النشر اليومي{% endblock %}
+
+{% block page_title %}جدولة النشر اليومي للقناة{% endblock %}
+
+{% block topbar_actions %}
+<a class="btn btn-outline" href="{{ url_for('index') }}">↩ لوحة التحكم</a>
+<a class="btn btn-outline" href="{{ url_for('settings_page', _anchor='channel') }}">⚙️ رسالة القناة</a>
+{% endblock %}
+
+{% block content %}
+{% set day_names = {0: 'الأحد', 1: 'الاثنين', 2: 'الثلاثاء', 3: 'الأربعاء', 4: 'الخميس', 5: 'الجمعة', 6: 'السبت'} %}
+
+<section class="hero glass">
+  <div class="hero-h">
+    <div>
+      <h2>منشورات التداول اليومية</h2>
+      <small>
+        جدول زمني لرسائل القناة اليومية (نص أو نص + صورة). يُنشر البوت كل رسالة
+        تلقائياً عند حلول موعدها، ويُثبّتها إن فعّلت التثبيت — بالتوقيت المحلي للخادم.
+        لن يُنشر أي شيء في قناة المراجعة بمجرد برمجة الجدول.
+      </small>
+    </div>
+  </div>
+</section>
+
+<div style="display:grid;grid-template-columns:minmax(320px,420px) 1fr;gap:16px;align-items:start;">
+  <section class="card settings-form">
+    <h3 class="settings-section-title">➕ إضافة رسالة مجدولة</h3>
+    <form method="post" action="{{ url_for('posts_add') }}" enctype="multipart/form-data">
+      <label>العنوان (لأغراض اللوحة فقط — لا يُنشر)</label>
+      <input type="text" name="title" placeholder="مثال: إشارة اليوم الأولى" required maxlength="200">
+      <label>نص الرسالة (اختياري إن رفعت صورة)</label>
+      <textarea name="body" rows="4" placeholder="اكتب نص المنشور كاملاً (يدعم Markdown تلغرام)"></textarea>
+      <label>صورة المنشور (اختياري)</label>
+      <input type="file" name="photo" accept=".jpg,.jpeg,.png,.webp">
+      <label>وقت النشر (بالتوقيت المحلي)</label>
+      <input type="time" name="post_time" required>
+      <label>أيام الأسبوع</label>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+        {% for i in range(0, 7) %}
+        <label class="check-row" style="flex:0 0 auto;margin:0;">
+          <input type="checkbox" name="days" value="{{ i }}" checked>
+          <span>{{ day_names[i] }}</span>
+        </label>
+        {% endfor %}
+      </div>
+      <label class="check-row">
+        <input type="checkbox" name="pin" checked>
+        <span>📌 تثبيت المنشور في القناة (يحل مكان المثبَّت السابق)</span>
+      </label>
+      <button class="btn btn-check" type="submit">جدولة النشر</button>
+    </form>
+  </section>
+
+  <section class="card settings-form">
+    <h3 class="settings-section-title">📅 الرسائل المجدولة ({{ posts|length }})</h3>
+    {% if posts %}
+    <div class="pending-list">
+      {% for post in posts %}
+      {% set day_list = [] %}
+      {% for d in post.days if d in '0123456' %}
+        {% set _ = day_list.append(day_names[d|int]) %}
+      {% endfor %}
+      <section class="card pending-card" style="padding:14px;">
+        <div class="pending-head">
+          <b class="pending-title">{{ post.title }}</b>
+          {% if post.enabled %}
+          <span class="chip chip-ok">مفعّلة</span>
+          {% else %}
+          <span class="chip chip-bad">متوقفة</span>
+          {% endif %}
+          {% if post.pin %}<span class="chip chip-neutral">📌 مثبَّتة</span>{% endif %}
+        </div>
+        <div class="pending-meta">
+          <span>🕘 {{ post.time }} · {{ 'كل الأيام' if post.days == '0123456' else day_list|join('، ') }}</span>
+          <span dir="ltr">#{{ post.id }}</span>
+        </div>
+        <div class="pending-meta">
+          <span>✅ نُشرت {{ post.sentCount }} مرة</span>
+          {% if post.lastRunKey %}
+          <span dir="ltr">آخر محاولة: {{ post.lastRunKey }}</span>
+          {% endif %}
+        </div>
+        {% if post.lastResult %}
+        <div class="pending-meta">
+          <span>النتيجة الأخيرة: {{ post.lastResult }}</span>
+        </div>
+        {% endif %}
+        <div class="pending-actions">
+          <form class="inline" method="post" action="{{ url_for('posts_send_now', post_id=post.id) }}"
+                onsubmit="return confirm('نشر هذه الرسالة في القناة الآن؟');">
+            <button class="btn btn-sm btn-success" type="submit">🚀 نشر الآن</button>
+          </form>
+          <form class="inline" method="post" action="{{ url_for('posts_toggle', post_id=post.id) }}">
+            <button class="btn btn-sm btn-outline" type="submit">
+              {{ '⏸ إيقاف' if post.enabled else '▶️ تفعيل' }}
+            </button>
+          </form>
+          <form class="inline" method="post" action="{{ url_for('posts_delete', post_id=post.id) }}"
+                onsubmit="return confirm('حذف هذه الرسالة المجدولة نهائياً؟');">
+            <button class="btn btn-sm btn-danger" type="submit">🗑 حذف</button>
+          </form>
+        </div>
+        {% if post.body or post.photo %}
+        <details style="margin-top:10px;">
+          <summary class="settings-hint">معاينة المحتوى</summary>
+          <pre class="channel-preview" dir="auto" style="white-space:pre-wrap;">{{ post.body or '—' }}</pre>
+          {% if post.photo %}<small dir="ltr">📎 {{ post.photo }}</small>{% endif %}
+        </details>
+        {% endif %}
+      </section>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty">
+      <div class="ic"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 9h8M8 13h5"/></svg></div>
+      <b>لا توجد رسائل مجدولة</b>
+      <small>أضف أول منشور يومي من النموذج المجاور وسيبدأ البوت بنشره تلقائياً.</small>
+    </div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

@@ -16,6 +16,7 @@ _loop: Optional[asyncio.AbstractEventLoop] = None
 _support_bot = None
 awaiting_photo: set[int] = set()
 
+# بوت الدعم المخصص فعّال فعلاً؟ (اختيار صريح فقط، لا سلوك تلقائي)
 _SUPPORT_DIGEST_SECONDS = 30
 _support_pending: dict[int, int] = {}
 _support_lock = threading.Lock()
@@ -24,7 +25,16 @@ _support_timers: dict[int, threading.Timer] = {}
 _DEBUG_LOG = Path(config.DATA_DIR) / "membership_check.log"
 
 
+def _time_cache_valid(cache: dict, ttl: float) -> bool:
+    """true إذا كان الكاش حديثاً خلال ttl ثانية."""
+    return cache.get("ts", 0) and (time.monotonic() - cache["ts"]) < ttl
+
+
 def _debug(text: str) -> None:
+    try:
+        print(f"[debug] {text}", flush=True)
+    except Exception:
+        pass
     try:
         with open(_DEBUG_LOG, "a", encoding="utf-8") as fh:
             fh.write(text + "\n")
@@ -95,7 +105,10 @@ def notify_member_main(user_id: int, text: str) -> None:
 
 
 def notify_admins(
-    text: str, admin_ids: list[int], photo_path: Optional[str] = None
+    text: str,
+    admin_ids: list[int],
+    photo_path: Optional[str] = None,
+    reply_markup=None,
 ) -> None:
     if _bot is None:
         return
@@ -105,12 +118,18 @@ def notify_admins(
             _send_with_target(
                 _bot,
                 lambda admin_id=admin_id, path=path: _bot.send_photo(
-                    admin_id, FSInputFile(str(path)), caption=text
+                    admin_id,
+                    FSInputFile(str(path)),
+                    caption=text,
+                    reply_markup=reply_markup,
                 ),
             )
         else:
             _send_with_target(
-                _bot, lambda admin_id=admin_id: _bot.send_message(admin_id, text)
+                _bot,
+                lambda admin_id=admin_id: _bot.send_message(
+                    admin_id, text, reply_markup=reply_markup
+                ),
             )
 
 
@@ -281,6 +300,23 @@ def post_verify_message() -> tuple[bool, int | None, str, str]:
         return False, None, str(exc), ""
 
 
+async def _post_scheduled_now(post) -> tuple[bool, str]:
+    from bot.channel import publish_scheduled_post
+
+    return await publish_scheduled_post(_bot, post)
+
+
+def post_scheduled_now(post: dict) -> tuple[bool, str]:
+    """نشر فوري (زر «نشر الآن») من لوحة التحكم لرسالة مجدولة. يرجع (ok, note)."""
+    if _bot is None or _loop is None:
+        return False, "البوت غير متصل"
+    future = asyncio.run_coroutine_threadsafe(_post_scheduled_now(post), _loop)
+    try:
+        return future.result(30)
+    except Exception as exc:
+        return False, str(exc)
+
+
 async def _remove_member(user_id: int) -> tuple[bool, str]:
     try:
         await _bot.ban_chat_member(
@@ -333,17 +369,25 @@ def kick_members(user_ids: list[int]) -> int:
         return -1
 
 
+_member_count_cache: dict = {"ts": 0.0, "value": None}
+
+
 async def _get_member_count() -> int:
     return await _bot.get_chat_member_count(chat_id=config.CHANNEL_ID)
 
 
 def get_member_count() -> Optional[int]:
-    """Total members currently in the group (cached after timeout)."""
+    """Total members currently in the group (cached ~30s to avoid a Telegram
+    round-trip on every dashboard page load)."""
     if _bot is None or _loop is None:
         return None
+    if _time_cache_valid(_member_count_cache, 30):
+        return _member_count_cache["value"]
     future = asyncio.run_coroutine_threadsafe(_get_member_count(), _loop)
     try:
-        return future.result(15)
+        value = future.result(15)
+        _member_count_cache.update(ts=time.monotonic(), value=value)
+        return value
     except Exception:
         return None
 

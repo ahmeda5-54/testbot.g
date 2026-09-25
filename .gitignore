@@ -1,8 +1,80 @@
-.env
-data/
-uploads/
-userbot/
+# ⚠️ ملاحظة أمان مهمة للبائعين ⚠️
+# هذا الملف يمنع رفع البيانات الحساسة على GitHub
+# تأكد من عدم رفع LICENSE_SECRET أو مفاتيح البوتات الخاصة بك
+
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
 .venv/
 venv/
+ENV/
+env/
+
+# Environment variables - ⚠️ لا ترفع هذا الملف! ⚠️
+.env
+.env.local
+.env.production
+
+# Database - قاعدة البيانات المحلية فقط
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Uploads - صور المشتركين
+uploads/
+
+# Telethon sessions - جلسات UserBot
+userbot/*.session
+userbot/*.session-journal
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+*.err.log
+
+# Temporary
+*.tmp
+*.bak
+.cache/
+
+# Railway (local testing)
+.railway/
+
+# ⚠️ ملفات مهمة - لا ترفعها! ⚠️
+# إذا رفعت أي من هذه، احذفها فوراً وغير المفاتيح!
+*_secret*
+*_private*
+credentials.json
+token.txt

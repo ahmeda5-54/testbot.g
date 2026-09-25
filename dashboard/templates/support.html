@@ -7,78 +7,88 @@
 {% endblock %}
 
 {% block content %}
-<section class="stats-grid">
-  <div class="stat-card">
+<div class="stats">
+  <div class="stat" style="--c:#2aabee">
+    <div class="ic"><svg viewBox="0 0 24 24"><path d="M4 4h16v12H8l-4 4z"/></svg></div>
     <h3>كل الرسائل</h3>
-    <p>{{ types[0][2] }}</p>
-    <span class="stat-sub">من زر «تواصل مع الدعم» في المجموعة</span>
+    <div class="num">{{ types[0][2] }}</div>
+    <small>من زر «تواصل مع الدعم» في المجموعة</small>
   </div>
-  <div class="stat-card warn">
+  <div class="stat" style="--c:#fbbf24">
+    <div class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
     <h3>بانتظار الرد</h3>
-    <p>{{ statuses[1][2] }}</p>
-    <span class="stat-sub">جديدة لم يصلها رد بعد</span>
+    <div class="num">{{ statuses[1][2] }}</div>
+    <small>جديدة لم يصلها رد بعد</small>
   </div>
-  <div class="stat-card success">
+  <div class="stat" style="--c:#34d399">
+    <div class="ic"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></div>
     <h3>تم الرد عليها</h3>
-    <p>{{ statuses[2][2] }}</p>
-    <span class="stat-sub">أُرسل إليها رد</span>
+    <div class="num">{{ statuses[2][2] }}</div>
+    <small>أُرسل إليها رد</small>
   </div>
-  <div class="stat-card">
+  <div class="stat" style="--c:#7c5cff">
+    <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg></div>
     <h3>متوسط زمن الرد</h3>
-    <p>{{ avg_reply_txt }}</p>
-    <span class="stat-sub">آخر 30 يوم</span>
+    <div class="num">{{ avg_reply_txt }}</div>
+    <small>آخر 30 يوم</small>
   </div>
-</section>
+</div>
 
 {% if satisfaction_counts.get('satisfied') or satisfaction_counts.get('reopened') %}
-<div class="filter-bar">
-  <div class="pills">
-    <span class="pill-badge" style="background:var(--success); color:#fff;">😊 راضٍ: {{ satisfaction_counts.get('satisfied', 0) }}</span>
-    <span class="pill-badge" style="background:var(--warn); color:#fff;">🔄 أعيد فتحها: {{ satisfaction_counts.get('reopened', 0) }}</span>
-  </div>
+<div class="chips">
+  <span class="chip chip-ok">😊 راضٍ: {{ satisfaction_counts.get('satisfied', 0) }}</span>
+  <span class="chip chip-warn">🔄 أعيد فتحها: {{ satisfaction_counts.get('reopened', 0) }}</span>
 </div>
 {% endif %}
 
 <div class="filter-bar">
-  <div class="pills">
+  <div class="chips">
     {% for key, label, c in types %}
-      <a class="pill {{ 'active' if msg_type == key }}" href="{{ url_for('support_page', type=key, status=status, q=q) }}">
-        {{ label }} <span class="pill-badge">{{ c }}</span>
+      <a class="chip {{ 'on' if msg_type == key }}" href="{{ url_for('support_page', type=key, status=status, q=q, priority=priority) }}">
+        {{ label }} <em>{{ c }}</em>
       </a>
     {% endfor %}
   </div>
-  <div class="pills">
+  <div class="chips">
     {% for key, label, c in statuses %}
-      <a class="pill {{ 'active' if status == key }}" href="{{ url_for('support_page', type=msg_type, status=key, q=q) }}">
-        {{ label }} <span class="pill-badge">{{ c }}</span>
+      <a class="chip {{ 'on' if status == key }}" href="{{ url_for('support_page', type=msg_type, status=key, q=q, priority=priority) }}">
+        {{ label }} <em>{{ c }}</em>
       </a>
     {% endfor %}
+    {% if priority == 1 %}
+    <a class="chip on" href="{{ url_for('support_page', type=msg_type, status=status, q=q) }}" title="إلغاء فلتر الأولوية">
+      🔴 أولوية عالية <em>مرشّح الآن ✕</em>
+    </a>
+    {% else %}
+    <a class="chip" href="{{ url_for('support_page', type=msg_type, status=status, q=q, priority=1) }}">
+      🔴 أولوية عالية <em>{{ high_count }}</em>
+    </a>
+    {% endif %}
   </div>
   <form class="inline-form" method="get" action="{{ url_for('support_page') }}">
     <input type="hidden" name="type" value="{{ msg_type }}">
     <input type="hidden" name="status" value="{{ status }}">
-    <input type="search" name="q" value="{{ q }}" placeholder="بحث: اسم / يوزرنيم / ID / نص الرسالة" style="min-width:220px;">
+    <input type="hidden" name="priority" value="{{ priority or '' }}">
+    <input type="search" name="q" value="{{ q }}" placeholder="بحث: اسم / يوزرنيم / ID / نص الرسالة" style="min-width:220px; flex:1;">
     <button class="btn btn-sm" type="submit">🔎 بحث</button>
-    <a class="btn btn-sm" href="{{ url_for('support_export_csv', type=msg_type, status=status, q=q) }}">⬇️ تصدير CSV</a>
+    <a class="btn btn-sm" href="{{ url_for('support_export_csv', type=msg_type, status=status, q=q, priority=priority) }}">⬇️ تصدير CSV</a>
   </form>
-  <div class="pills">
-    <form class="inline-form" method="post" action="{{ url_for('support_cleanup_old') }}"
-          onsubmit="return confirm('حذف الرسائل المُجاب عنها الأقدم من عدد الأيام؟');">
-      <label for="cleanup-days" style="font-size:12px; color:var(--muted);">حذف المُجاب عنها الأقدم من</label>
-      <input type="number" id="cleanup-days" name="days" value="30" min="1" max="365" style="width:70px;">
-      <button class="btn btn-sm" type="submit">🗑 تنظيف</button>
-    </form>
-  </div>
+  <form class="inline-form" method="post" action="{{ url_for('support_cleanup_old') }}"
+        onsubmit="return confirm('حذف الرسائل المُجاب عنها الأقدم من عدد الأيام؟');">
+    <label for="cleanup-days" style="font-size:12px; color:var(--muted);">حذف المُجاب عنها الأقدم من</label>
+    <input type="number" id="cleanup-days" name="days" value="30" min="1" max="365" style="width:70px;">
+    <button class="btn btn-sm" type="submit">🗑 تنظيف</button>
+  </form>
 </div>
 
 {% if total_pages > 1 %}
 <nav class="pagination">
   {% if page > 1 %}
-  <a class="pill" href="{{ url_for('support_page', type=msg_type, status=status, q=q, page=page-1) }}">→ السابق</a>
+  <a class="pill" href="{{ url_for('support_page', type=msg_type, status=status, q=q, priority=priority, page=page-1) }}">→ السابق</a>
   {% endif %}
   <span class="page-info">صفحة {{ page }} من {{ total_pages }} ({{ total }} رسالة)</span>
   {% if page < total_pages %}
-  <a class="pill" href="{{ url_for('support_page', type=msg_type, status=status, q=q, page=page+1) }}">التالي ←</a>
+  <a class="pill" href="{{ url_for('support_page', type=msg_type, status=status, q=q, priority=priority, page=page+1) }}">التالي ←</a>
   {% endif %}
 </nav>
 {% endif %}
@@ -88,6 +98,8 @@
 <section class="card" id="msg-{{ m.id }}" style="border-inline-start: 4px solid {{ 'var(--warn)' if m.status == 'new' else 'var(--success)' }};">
   <div class="card-head">
     <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+      <span class="chip chip-neutral" title="رقم التذكرة — يكتب العضو «بخصوص {{ m.id }}» لفتحها">🎫 #{{ m.id }}</span>
+      {% if m.priority %}<span class="chip chip-bad" title="رسالة أولوية عالية (استعجال/خسارة/سحب...) تظهر في الأعلى">🔴 أولوية</span>{% endif %}
       <span class="chip {{ 'chip-warn' if m.status == 'new' else 'chip-ok' }}">
         {{ 'جديدة' if m.status == 'new' else 'تم الرد' }}
       </span>
@@ -119,6 +131,13 @@
 
   <p class="channel-preview" style="white-space:pre-wrap; margin-bottom:14px;">{{ m.message }}</p>
 
+  {% if m.ticketUpdates %}
+  <div class="support-history" style="margin-bottom:12px;">
+    <div style="font-size:12px; color:var(--muted); margin-bottom:5px;">📎 متابعات العضو على هذه التذكرة:</div>
+    <div class="flash warn" style="margin-bottom:5px; white-space:pre-wrap; font-size:13px;">{{ m.ticketUpdates }}</div>
+  </div>
+  {% endif %}
+
   {% if m._history %}
   <div class="support-history" style="margin-bottom:12px;">
     <div style="font-size:12px; color:var(--muted); margin-bottom:5px;">سجل الردود:</div>
@@ -149,7 +168,7 @@
               data-member-id="{{ m.telegramUserId }}"
               data-mtype="{{ m.msgType }}"
               placeholder="اكتب الرد هنا... سيُرسل مباشرة إلى العضو"></textarea>
-    <button class="btn" type="submit">📨 إرسال الرد إلى العضو</button>
+    <button class="btn pri" type="submit">📨 إرسال الرد إلى العضو</button>
   </form>
 
   <details class="support-extra" style="margin-bottom:12px;">
@@ -186,17 +205,32 @@
 </section>
 {% endfor %}
 {% else %}
-<p class="empty">لا توجد رسائل دعم في هذا النطاق.</p>
+<div class="empty">
+  <div class="ic"><svg viewBox="0 0 24 24"><path d="M4 4h16v12H8l-4 4z"/></svg></div>
+  <b>لا توجد رسائل دعم في هذا النطاق</b>
+  <small>غيّر الفلاتر أو ابحث بكلمة أخرى.</small>
+</div>
 {% endif %}
 
 {% if templates %}
 <h3 class="settings-section-title">📋 ردود جاهزة (قوالب) — {{ msg_type or 'كل الأنواع' }}</h3>
 <section class="card" style="margin-bottom:16px;">
+  <p class="settings-hint">
+    القوالب المحفوظة تُستخدم في مكانين: التعبئة اليدوية عند الرد، <b>والرد التلقائي الذكي</b> —
+    حين يكتب العضو رسالة يطابق أحدها (بالكلمات المفتاحية ضمن فئته) يرد البوت مباشرة دون انتظارك.
+    القوالب المفعلة فقط تدخل في الرد التلقائي.
+  </p>
   <div class="pills" style="flex-wrap:wrap;">
     {% for t in templates %}
     <span class="pill" style="cursor:pointer;" onclick="fillFirstFromTemplate({{ t.id }})" title="{{ t.body }}">
       {% if t.type %}<span class="pill-badge" style="margin-inline-end:4px;">{{ t.type }}</span>{% endif %}{{ t.title }}
+      {% if t.hits %}<em style="opacity:.7;">· {{ t.hits }} ردود</em>{% endif %}
     </span>
+    <form class="inline-form" method="post" action="{{ url_for('support_template_toggle', template_id=t.id) }}">
+      <button class="btn btn-sm {{ '' if t.enabled else 'btn-outline' }}" type="submit" title="تفعيل/تعطيل الرد التلقائي لهذا القالب">
+        {{ '🟢 مفعل' if t.enabled else '⚪ معطل' }}
+      </button>
+    </form>
     <form class="inline-form" method="post" action="{{ url_for('support_template_delete', template_id=t.id) }}"
           onsubmit="return confirm('حذف هذا القالب؟');">
       <button class="btn btn-danger btn-sm" type="submit">✕</button>
@@ -208,21 +242,44 @@
 </section>
 {% endif %}
 
-<form class="card settings-form" method="post" action="{{ url_for('support_templates_save') }}">
-  <h4 class="ub-steps-title">📋 إضافة رد جاهز جديد</h4>
-  <label>نوع الرسالة لهذا القالب</label>
-  <select name="type" style="width:100%;">
-    <option value="" {% if msg_type == '' %}selected{% endif %}>لجميع الأنواع</option>
-    {% for key, label, _c in types %}
-      {% if key %}<option value="{{ label }}" {% if msg_type == label %}selected{% endif %}>{{ label }}</option>{% endif %}
-    {% endfor %}
-  </select>
-  <label>عنوان القالب (مثال: تأخير المراجعة)</label>
-  <input type="text" name="title" placeholder="عنوان سريع يظهر لك فقط" required>
-  <label>نص القالب</label>
-  <textarea name="body" rows="3" placeholder="نص الرد الذي سترسله للأعضاء..."></textarea>
-  <button class="btn" type="submit">حفظ القالب</button>
-</form>
+<h3 class="settings-section-title">⚙️ إضافة قالب / اختبار ترتيب الردود التلقائية</h3>
+<section class="card settings-form" id="tpl-test">
+  <form method="post" action="{{ url_for('support_templates_save') }}">
+    <h4 class="ub-steps-title">📋 إضافة رد جاهز جديد (قالب)</h4>
+    <label>فئة القالب (تُستخدم للرد التلقائي في هذه الفئة فقط)</label>
+    <select name="type" style="width:100%;">
+      <option value="" {% if msg_type == '' %}selected{% endif %}>لجميع الأنواع (يكتفي بالكلمات المفتاحية)</option>
+      {% for key, label, _c in types %}
+        {% if key %}<option value="{{ label }}" {% if msg_type == label %}selected{% endif %}>{{ label }}</option>{% endif %}
+      {% endfor %}
+    </select>
+    <label>عنوان القالب (مثال: تأخير المراجعة)</label>
+    <input type="text" name="title" placeholder="عنوان سريع يظهر لك فقط" required>
+    <label>نص الرد التلقائي (يصل للعضو فور المطابقة)</label>
+    <textarea name="body" rows="3" placeholder="نص الرد الذي سيُرسل تلقائياً..."></textarea>
+    <label>الكلمات المفتاحية للمطابقة التلقائية (تفصل بفاصلة ، أو سطر جديد)</label>
+    <input type="text" dir="rtl" name="keywords" placeholder="مراجعة, تأخر, كم يستغرق, وين أسجل">
+    <p class="settings-hint">عندما تحتوي رسالة العضو على إحدى هذه الكلمات (بعد التجريد من التشكيل والهمزات)
+      يُرد عليه بهذا القالب تلقائياً. تكثر الكلمات المفتاحية = أدق التطابق.</p>
+    <button class="btn pri" type="submit">حفظ القالب</button>
+  </form>
+
+  <hr style="margin:18px 0; border:none; border-top:1px solid var(--border);">
+
+  <form method="post" action="{{ url_for('support_template_test') }}">
+    <h4 class="ub-steps-title">🧪 اختبار ترتيب الرد التلقائي</h4>
+    <label>اكتب رسالة العضو التجريبية هنا لنرى أي قالب سيُرد عليها</label>
+    <textarea name="sample" rows="2" placeholder="مثال: شنو تأخر رسالتك؟ كم أستنى المراجعة..." required></textarea>
+    <label>فئة الرسالة التجريبية (كما يختارها العضو من القائمة)</label>
+    <select name="type" style="width:100%;">
+      <option value="" {% if msg_type == '' %}selected{% endif %}>لجميع الأنواع</option>
+      {% for key, label, _c in types %}
+        {% if key %}<option value="{{ label }}" {% if msg_type == label %}selected{% endif %}>{{ label }}</option>{% endif %}
+      {% endfor %}
+    </select>
+    <button class="btn" type="submit">🔍 جرّب المطابقة</button>
+  </form>
+</section>
 
 <script>
 var SUPPORT_TEMPLATES = {{ all_templates | list | tojson }};

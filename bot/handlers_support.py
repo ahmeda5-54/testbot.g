@@ -8,6 +8,7 @@ import db
 from bot import bridge, texts
 from bot.states import SupportState
 from bot.support_menu import SUPPORT_CB, support_keyboard, satisfaction_keyboard
+from bot.ticket import handle_ticket_reply
 
 router = Router()
 
@@ -105,12 +106,30 @@ async def on_support_message(message: Message, state: FSMContext) -> None:
     if not body:
         await message.answer(texts.SUPPORT_PROMPT_TEXT_ONLY)
         return
+    # «بخصوص <رقم التذكرة>» يفتح التذكرة مباشرة.
+    if await handle_ticket_reply(message):
+        await state.clear()
+        return
     ban = db.is_support_banned(user.id)
     if ban is not None:
         await state.clear()
         await message.answer(
             texts.support_banned_message(ban["bannedUntil"])
         )
+        return
+    # رد تلقائي ذكي: أقرب قالب محفوظ في فئة هذه الرسالة (مطابقة بالكلمات المفتاحية).
+    auto = db.auto_reply_for(body, label)
+    if auto is not None:
+        tpl = auto["template"]
+        db.bump_template_hits(tpl["id"])
+        await state.clear()
+        await message.answer(tpl["body"])
+        return
+    faq_rule = db.match_faq(body)
+    if faq_rule is not None:
+        db.bump_faq_hits(faq_rule["id"])
+        await state.clear()
+        await message.answer(faq_rule["reply"])
         return
     if db.recent_support_count(user.id) >= 1:
         await state.clear()
@@ -123,12 +142,13 @@ async def on_support_message(message: Message, state: FSMContext) -> None:
         msg_type=label,
         name=user.full_name,
         username=user.username,
+        priority=db.detect_support_priority(body),
     )
     await state.clear()
     if msg is None:
         await message.answer(texts.SUPPORT_PROMPT_TEXT_ONLY)
         return
-    await message.answer(texts.SUPPORT_RECEIVED)
+    await message.answer(texts.support_received(msg["id"]))
     bridge.notify_admins_support(config.ADMIN_IDS)
 
 
@@ -156,6 +176,19 @@ async def on_support_photo(message: Message, state: FSMContext) -> None:
         caption = "📎 لقطة شاشة (بدون شرح)"
     else:
         caption = caption[:4000]
+    # «بخصوص <رقم التذكرة>» مع الصورة يفتح التذكرة مباشرة.
+    if await handle_ticket_reply(message, caption):
+        await state.clear()
+        return
+    # إن تضمنت الصورة شرحاً يطابق قالباً محفوظاً نرد تلقائياً ونُسجّل المرفق للإدارة فقط.
+    if caption not in ("📎 لقطة شاشة (بدون شرح)",):
+        auto = db.auto_reply_for(caption, label)
+        if auto is not None:
+            tpl = auto["template"]
+            db.bump_template_hits(tpl["id"])
+            await state.clear()
+            await message.answer(tpl["body"])
+            return
     db.mark_talked(user.id)
     msg = db.add_support_message(
         user.id,
@@ -165,6 +198,7 @@ async def on_support_photo(message: Message, state: FSMContext) -> None:
         username=user.username,
         has_attachment=1,
         attachment_ref=file_id,
+        priority=db.detect_support_priority(caption),
     )
     await state.clear()
     if msg is None:
@@ -176,7 +210,7 @@ async def on_support_photo(message: Message, state: FSMContext) -> None:
         file_id,
         f"📨 مرفق من رسالة الدعم\nالنوع: {label}\nالمُرسِل: {user_display}\n@" + (user.username or "-"),
     )
-    await message.answer(texts.SUPPORT_RECEIVED)
+    await message.answer(texts.support_received(msg["id"]))
     bridge.notify_admins_support(config.ADMIN_IDS)
 
 

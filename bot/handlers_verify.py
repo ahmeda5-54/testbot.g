@@ -58,6 +58,20 @@ async def on_account(message: Message, state: FSMContext) -> None:
     if not value.replace(" ", "").isdigit():
         await flow.safe_answer(message, texts.INVALID_ACCOUNT)
         return
+    blocked = db.is_account_blocked(value)
+    if blocked is not None:
+        reason = blocked.get("reason") or "بدون سبب"
+        db.upsert_member(
+            message.from_user.id,
+            status=db.REJECTED,
+            rejectionReason=f"رقم الحساب محظور ({reason})",
+        )
+        await flow.safe_answer(message, texts.ACCOUNT_BLOCKED)
+        bridge.notify_admins(
+            texts.admin_blocked_attempt(db.get_member(message.from_user.id), reason),
+            config.ADMIN_IDS,
+        )
+        return
     await _save_text_field(message, state, "account", value)
 
 
