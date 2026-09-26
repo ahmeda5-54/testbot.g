@@ -176,6 +176,44 @@ CREATE TABLE IF NOT EXISTS scheduled_posts (
     sentCount INTEGER NOT NULL DEFAULT 0,
     createdAt TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS license_codes (
+    code TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    createdAt TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS diag_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    section TEXT NOT NULL,
+    message TEXT NOT NULL DEFAULT '',
+    createdAt TEXT NOT NULL,
+    code_hash TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS login_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code_hash TEXT NOT NULL,
+    token TEXT NOT NULL UNIQUE,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL DEFAULT 0,
+    last_used INTEGER NOT NULL DEFAULT 0,
+    uses INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS buyer_channels (
+    code_hash TEXT PRIMARY KEY,
+    channel_link TEXT NOT NULL DEFAULT '',
+    channel_kind TEXT NOT NULL DEFAULT '',
+    channel_title TEXT NOT NULL DEFAULT '',
+    bot_joined INTEGER NOT NULL DEFAULT 0,
+    bot_admin INTEGER NOT NULL DEFAULT 0,
+    generated_link TEXT NOT NULL DEFAULT '',
+    last_error TEXT NOT NULL DEFAULT '',
+    checked_at TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT ''
+);
 """
 
 DEFAULT_SETTINGS = {
@@ -250,6 +288,7 @@ def init_db() -> None:
         _migrate_support_columns(conn)
         _migrate_template_type_column(conn)
         _migrate_template_keywords_column(conn)
+        _migrate_diag_code_column(conn)
 
 
 def _migrate_template_type_column(conn: sqlite3.Connection) -> None:
@@ -293,6 +332,13 @@ def _migrate_support_columns(conn: sqlite3.Connection) -> None:
             conn.execute(
                 f"ALTER TABLE support_messages ADD COLUMN {col} {definition}"
             )
+
+
+def _migrate_diag_code_column(conn: sqlite3.Connection) -> None:
+    """يربط سجلات التشخيص بكود المشتري (لبناء سجل تشخيص لكل مشترٍ في صفحة المدير)."""
+    cols = [row["name"] for row in conn.execute("PRAGMA table_info(diag_logs)")]
+    if "code_hash" not in cols:
+        conn.execute("ALTER TABLE diag_logs ADD COLUMN code_hash TEXT NOT NULL DEFAULT ''")
 
 
 def get_setting(key: str, default: str = "") -> str:
@@ -1721,5 +1767,186 @@ def mark_scheduled_post_sent(post_id: int, ok: bool, note: str) -> None:
                    sentCount = sentCount + ?
                WHERE id = ?""",
             (_post_slot_key(), (note or "")[:500], 1 if ok else 0, post_id),
+        )
+        conn.commit()
+
+
+# ── سجل التشخيص (أخطاء الأقسام) — للمدير/البائع فقط ──────────
+
+
+def add_diag(section: str, message: str, code_hash: str = "") -> None:
+    """يسجّل خطأ/حدث تشخيصي من قسم محدد (bot:… / web:… / license:…).
+    code_hash (اختياري): يربط السجل بكود مشتٍر محدد لسجل التشخيص لكل مشترٍ."""
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO diag_logs (section, message, createdAt, code_hash) VALUES (?, ?, ?, ?)",
+            (section[:80], (message or "")[:1000], now_iso(), (code_hash or "")[:64]),
+        )
+
+
+def get_diag_logs(limit: int = 100, code_hash: str = "") -> list[dict]:
+    with get_connection() as conn:
+        if code_hash:
+            rows = conn.execute(
+                "SELECT * FROM diag_logs WHERE code_hash = ? ORDER BY id DESC LIMIT ?",
+                (code_hash, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM diag_logs ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def count_diag_logs(code_hash: str = "") -> int:
+    with get_connection() as conn:
+        if code_hash:
+            row = conn.execute(
+                "SELECT COUNT(*) AS c FROM diag_logs WHERE code_hash = ?", (code_hash,)
+            ).fetchone()
+        else:
+            row = conn.execute("SELECT COUNT(*) AS c FROM diag_logs").fetchone()
+    return int(row["c"]) if row else 0
+
+
+def clear_diag_logs() -> int:
+    with get_connection() as conn:
+        cursor = conn.execute("DELETE FROM diag_logs")
+        conn.commit()
+    return cursor.rowcount
+
+
+# ── أكواد البيع (يولّدها البائع من صفحة المدير) ─────────────
+
+
+def add_license_code(code: str, kind: str, note: str = "") -> None:
+    """يدرج كود بيع جديد يولّده البائع — يظل صالحاً عبر عمليات إعادة التهيئة."""
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO license_codes (code, kind, note, createdAt) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(code) DO UPDATE SET kind = excluded.kind, note = excluded.note",
+            (code.strip(), kind, note.strip()[:200], now_iso()),
+        )
+
+
+def list_license_codes() -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM license_codes ORDER BY createdAt DESC"
+        ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def delete_license_code(code: str) -> None:
+    with get_connection() as conn:
+        conn.execute("DELETE FROM license_codes WHERE code = ?", (code.strip(),))
+        conn.commit()
+
+
+# ── روابط الدخول المباشر للمشترين (تُنشأ من صفحة المدير) ──────
+
+
+def upsert_login_link(code_hash: str, token: str) -> None:
+    """يحفظ رابط دخول نشطاً لكود ما (يلغي أي رابط نشط سابق لنفس الكود)."""
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE login_links SET active = 0 WHERE code_hash = ? AND active = 1",
+            (code_hash,),
+        )
+        conn.execute(
+            "INSERT INTO login_links (code_hash, token, active, created_at) VALUES (?, ?, 1, ?)",
+            (code_hash, token, int(__import__("time").time())),
+        )
+        conn.commit()
+
+
+def get_active_login_link(code_hash: str) -> dict | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM login_links WHERE code_hash = ? AND active = 1 "
+            "ORDER BY created_at DESC LIMIT 1",
+            (code_hash,),
+        ).fetchone()
+    return _row_to_dict(row) if row else None
+
+
+def revoke_login_link(code_hash: str) -> int:
+    """يوقف كل الروابط النشطة لكود ما — يرجع عدد ما أُوقف."""
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "UPDATE login_links SET active = 0 WHERE code_hash = ? AND active = 1",
+            (code_hash,),
+        )
+        conn.commit()
+    return cursor.rowcount
+
+
+def redeem_login_link(token: str) -> dict | None:
+    """يسترد رابط دخول نشطاً ويسجّل استعماله — أو None إن كان غير صالح/موقوفاً."""
+    token = (token or "").strip()
+    if not token:
+        return None
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM login_links WHERE token = ? AND active = 1", (token,)
+        ).fetchone()
+        if row is None:
+            return None
+        now = int(__import__("time").time())
+        conn.execute(
+            "UPDATE login_links SET uses = uses + 1, last_used = ? WHERE id = ?",
+            (now, row["id"]),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM login_links WHERE id = ?", (row["id"],)
+        ).fetchone()
+    return _row_to_dict(row)
+
+
+def get_buyer_channel(code_hash: str) -> dict | None:
+    """سجل قناة/مجموعة مشترٍ (رابطه، نوعه، حالة البوت بداخله)."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM buyer_channels WHERE code_hash = ?", (code_hash,)
+        ).fetchone()
+    if row is None:
+        return None
+    return _row_to_dict(row)
+
+
+def save_buyer_channel(code_hash: str, channel_link: str) -> None:
+    """يحفظ/يحدّث رابط قناة المشترِي ويمسح كل النتائج المشتقة حتى يعاد تحليلها."""
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO buyer_channels (code_hash, channel_link, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(code_hash) DO UPDATE SET "
+            "channel_link = excluded.channel_link, "
+            "channel_kind = '', channel_title = '', "
+            "bot_joined = 0, bot_admin = 0, generated_link = '', "
+            "last_error = '', checked_at = '', updated_at = excluded.updated_at",
+            (code_hash, channel_link, now_iso()),
+        )
+        conn.commit()
+
+
+def update_buyer_channel(code_hash: str, **fields) -> None:
+    """يحدّث حقول محددة من سجل قناة المشترِي (channel_kind, bot_joined, …)."""
+    allowed = {
+        "channel_link", "channel_kind", "channel_title",
+        "bot_joined", "bot_admin", "generated_link",
+        "last_error", "checked_at",
+    }
+    sets = {k: v for k, v in fields.items() if k in allowed}
+    if not sets:
+        return
+    sets["updated_at"] = now_iso()
+    columns = ", ".join(f"{key} = ?" for key in sets)
+    values = [sets[key] for key in sets]
+    with get_connection() as conn:
+        conn.execute(
+            f"INSERT INTO buyer_channels (code_hash) VALUES (?) "
+            f"ON CONFLICT(code_hash) DO UPDATE SET {columns}",
+            [code_hash] + values,
         )
         conn.commit()

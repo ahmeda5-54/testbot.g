@@ -7,7 +7,15 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/glass.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/glass.css') }}?v=5">
+  <style>
+    .auto-keep{display:flex;align-items:flex-start;gap:9px;font-size:12.5px;line-height:1.7;color:#94a3b8;cursor:not-allowed;background:#171b29;border:1px solid #2a2f45;border-radius:12px;padding:10px 12px}
+    .auto-keep input{accent-color:#5b6cff;margin-top:3px;opacity:.65}
+    .lock-field{background:#10141f;color:#94a3b8;font-weight:600}
+    .back-link{display:inline-block;font-size:12.5px;color:#5b6cff;text-decoration:none;text-align:center;margin-top:6px;font-weight:600}
+    .back-link:hover{text-decoration:underline}
+    .field-hint{font-size:11.5px;color:#7d8aa5;line-height:1.7;margin-top:-6px}
+  </style>
 </head>
 <body class="login-body">
   <div class="orb a"></div><div class="orb b"></div><div class="orb c"></div>
@@ -16,17 +24,48 @@
       <div class="logo">V</div>
       <h1>لوحة التحكم</h1>
       <div class="login-brand">Verification Dashboard</div>
-      <label for="password">كلمة المرور</label>
-      <input type="password" id="password" name="password" required autofocus>
-      <label for="admin_name">اسمك (اختياري — يُسجل في سجل التعديلات)</label>
-      <input type="text" id="admin_name" name="admin_name" maxlength="60" placeholder="مثال: أبو أحمد">
+
       {% with messages = get_flashed_messages(with_categories=true) %}
         {% for category, message in messages %}
           <div class="flash {{ category }}">{{ message }}</div>
         {% endfor %}
       {% endwith %}
-      <button class="btn pri" type="submit">دخول</button>
+
+      {% if pending %}
+        <label>كود الدخول</label>
+        <input type="text" dir="ltr" value="{{ pending_code }}" disabled class="lock-field">
+        <p class="field-hint">أول دخول بهذا الكود — ضع كلمة مرور بسيطة (أرقام أو أحرف) تُربط بالكود نهائياً: تدخل بها مرة واحدة، وبعدها يكفيك إدخال الكود مباشرة.</p>
+        <label>كلمة المرور الجديدة</label>
+        <input type="password" id="password1" name="password1" required autofocus minlength="3" maxlength="40" placeholder="مثال: 1234 أو abcd">
+        <label>أعد كلمة المرور</label>
+        <input type="password" id="password2" name="password2" required minlength="3" maxlength="40" placeholder="أعد كلمة المرور نفسها">
+        <label>اسمك (اختياري — يظهر للبائع في سجل المشتركين)</label>
+        <input type="text" name="buyer_name" maxlength="60" placeholder="مثال: عميل المجموعة">
+        <button class="btn pri" type="submit">إنشاء كلمة المرور والمتابعة</button>
+        <a class="back-link" href="{{ url_for('login', cancel=1) }}">← دخول برمز آخر</a>
+      {% else %}
+        <label for="entry">رمز الدخول</label>
+        <input type="text" id="entry" name="entry" required autofocus autocomplete="off"
+               placeholder="كود التفعيل الذي سلّمه لك البائع" dir="ltr">
+        <label class="auto-keep" title="يُحفظ رمزك تلقائياً في متصفحك لتدخل مباشرة في المرات القادمة">
+          <input type="checkbox" checked disabled>
+          <span>تذكُّر تلقائي مفعّل دائماً — يحفظ الرمز في هذا المتصفح: تخرج وتعود وتدخل بالكود مباشرة.</span>
+        </label>
+        <button class="btn pri" type="submit">دخول</button>
+      {% endif %}
     </form>
   </div>
+  <script>
+    (function () {
+      var KEY = 'vd_last_code';
+      var input = document.getElementById('entry');
+      if (input) {
+        try { var saved = localStorage.getItem(KEY); if (saved) input.value = saved; } catch (e) {}
+        input.addEventListener('input', function () {
+          try { localStorage.setItem(KEY, input.value); } catch (e) {}
+        });
+      }
+    })();
+  </script>
 </body>
 </html>

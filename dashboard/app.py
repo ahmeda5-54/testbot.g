@@ -144,7 +144,7 @@ def healthz():
 @app.before_request
 def _setup_guard():
     """شاشات الدخول التسلسلية قبل فتح اللوحة:
-    1) الترخيص (نسخة تجريبية/دائمة + كود تفعيل) إن كان مفروضاً عند البائع
+    1) تسجيل الدخول (كود المشترك أو رمز المدير) إن لم يكن الترخيص سارياً
     2) معالج الإعداد الأول (وضع المفاتيح الخاصة) إن لم يكن النظام مكوّناً."""
     if request.endpoint in (
         "static",
@@ -153,10 +153,22 @@ def _setup_guard():
         "login",
         "logout",
         "activate",
+        "direct_login",
+        "manager_page",
+        "manager_code_new",
+        "manager_code_delete",
+        "manager_diag_clear",
+        "manager_link_new",
+        "manager_link_off",
+        "manager_channel_save",
+        "manager_channel_check",
+        "manager_channel_link",
     ):
         return None
+    # المدير (البائع) لا يخضع لشرط الترخيص — صفحته مستقلة تماماً.
     if config.license_enforced() and not license_mod.is_valid():
-        return redirect(url_for("activate"))
+        if session.get("role") != "manager":
+            return redirect(url_for("login"))
     if not config.is_configured():
         return redirect(url_for("setup_page"))
     return None
@@ -173,25 +185,137 @@ def _user_agent() -> str:
     return request.headers.get("User-Agent", "")
 
 
+def _simple_password(value: str) -> bool:
+    """كلمة مرور بسيطة كما طلب البائع: أحرف وأرقام (عربي/إنجليزي)
+    مع مسافات وشرطة/تحت سطر — بلا رموز خاصة."""
+    return bool(value) and all(ch.isalnum() or ch in " _-" for ch in value)
+
+
+def _is_manager_code(entry: str) -> bool:
+    """رمز المدير (البائع) — منفصل تماماً عن أكواد المشترين وليس ضمن
+    ENV_CONFIG_KEYS في معالج الإعداد، فلا يغيّره المشتري أبداً."""
+    expected = config.MANAGER_PASSWORD or config.DASHBOARD_PASSWORD
+    if not expected:
+        return False
+    return secrets.compare_digest((entry or "").encode(), expected.encode())
+
+
+def _buyer_login(code: str, via_link: bool = False) -> None:
+    """يدخل المشتري بجلسة دورها 'buyer' — لا تمنح أي وصول لصفحة المدير.
+    دخول/خروج المدير مستقل كلياً عن هذه الجلسة."""
+    session.pop("manager_ok", None)
+    session["admin"] = True
+    session["role"] = "buyer"
+    session["buyer_code"] = code
+    account = license_mod.buyer_account(code) or {}
+    session["admin_name"] = (account.get("buyer_name") or "").strip() or "مشترك"
+    license_mod.bump_buyer_login(code, _client_ip())
+    db.add_access_log(
+        "login_success", "تسجيل دخول ناجح", _client_ip(), _user_agent()
+    )
+    if via_link:
+        license_mod.diag_for_code(
+            code, "web:link", "دخول ناجح عبر رابط الدخول المباشر"
+        )
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    pending = session.get("pending_code")
+
     if request.method == "POST":
-        password_ok = request.form.get("password", "") == config.DASHBOARD_PASSWORD
-        if password_ok:
+        # الخطوة 2: أول دخول بهذا الكود — ضبط كلمة مرور بسيطة مربوطة بالكود
+        if pending:
+            p1 = request.form.get("password1", "").strip()
+            p2 = request.form.get("password2", "").strip()
+            name = request.form.get("buyer_name", "").strip()
+            error = None
+            if not (3 <= len(p1) <= 40):
+                error = "كلمة المرور قصيرة — اكتب من 3 إلى 40 حرفاً/رقماً."
+            elif not _simple_password(p1):
+                error = "كلمة المرور يجب أن تكون أرقاماً أو أحرفاً بسيطة فقط."
+            elif p1 != p2:
+                error = "كلمتا المرور غير متطابقتين — أعد كتابتهما."
+            if error:
+                flash(error, "error")
+            else:
+                ok, msg = license_mod.register_buyer(pending, p1, name)
+                if ok:
+                    session.pop("pending_code", None)
+                    _buyer_login(pending)
+                    license_mod.diag_for_code(
+                        pending, "web:login",
+                        "سُجّل مشترٍ جديد وربط كلمة مرور بكوده (أول دخول)",
+                    )
+                    return redirect(url_for("index"))
+                flash(msg, "error")
+            return render_template("login.html", pending=True, pending_code=pending)
+
+        # الخطوة 1: شاشة واحدة تميّز تلقائياً رمز المدير عن كود المشتري
+        entry = request.form.get("entry", "").strip()
+        if _is_manager_code(entry):
+            session.clear()
             session["admin"] = True
-            session["admin_name"] = (
-                request.form.get("admin_name", "").strip()[:60] or "أدمن"
-            )
+            session["role"] = "manager"
+            session["manager_ok"] = True
+            session["admin_name"] = "المدير"
+            # دخول المدير صامت — لا يظهر في سجلات اللوحة المشتركة إطلاقاً
+            return redirect(url_for("manager_page"))
+
+        account = license_mod.buyer_account(entry)
+        if account is None:
             db.add_access_log(
-                "login_success", "تسجيل دخول ناجح", _client_ip(), _user_agent()
+                "login_fail", "محاولة دخول غير ناجحة", _client_ip(), _user_agent()
             )
-            target = request.args.get("next") or url_for("index")
-            return redirect(target)
-        db.add_access_log(
-            "login_fail", "محاولة دخول فاشلة", _client_ip(), _user_agent()
-        )
-        flash("كلمة المرور غير صحيحة.", "error")
-    return render_template("login.html")
+            db.add_diag("web:login", "محاولة دخول برمز غير صالح")
+            flash("الرمز غير صحيح.", "error")
+        elif account["expired"]:
+            db.add_access_log(
+                "login_fail", "محاولة دخول غير ناجحة", _client_ip(), _user_agent()
+            )
+            license_mod.note_buyer_fail(account["code"])
+            license_mod.diag_for_code(
+                account["code"], "web:login", "محاولة دخول بكود تجريبي منتهٍ"
+            )
+            flash("انتهت صلاحية هذا الكود — تواصل مع البائع للحصول على كود جديد.", "error")
+        elif account["has_password"]:
+            # دخول لاحق: الكود وحده يكفي — كلمة المرور مربوطة به أصلاً
+            ok, msg = license_mod.apply_code(account["code"])
+            if not ok:
+                db.add_access_log(
+                    "login_fail", "محاولة دخول غير ناجحة", _client_ip(), _user_agent()
+                )
+                license_mod.note_buyer_fail(account["code"])
+                license_mod.diag_for_code(
+                    account["code"], "web:login", f"دخول مرفوض: {msg[:140]}"
+                )
+                flash(msg, "error")
+            else:
+                _buyer_login(account["code"])
+                target = request.args.get("next") or url_for("index")
+                if target.startswith("/manager"):
+                    target = url_for("index")
+                return redirect(target)
+        else:
+            # أول دخول: نحتفظ بالكود وننتقل لخطوة إنشاء كلمة المرور
+            session["pending_code"] = account["code"]
+            license_mod.diag_for_code(
+                account["code"], "web:login", "بدأ أول دخول — خطوة إنشاء كلمة المرور"
+            )
+            flash("أول دخول بهذا الكود — أنشئ كلمة مرور بسيطة تُربط بالكود.", "message")
+            return render_template("login.html", pending=True, pending_code=account["code"])
+
+    # GET
+    if session.get("admin"):
+        if session.get("role") == "manager":
+            return redirect(url_for("manager_page"))
+        if license_mod.is_valid():
+            return redirect(url_for("index"))
+        flash("انتهت صلاحية اشتراكك — سجّل دخولك بكود جديد.", "error")
+    if request.args.get("cancel"):
+        session.pop("pending_code", None)
+        pending = None
+    return render_template("login.html", pending=bool(pending), pending_code=pending or "")
 
 
 # ── معالج الإعداد الأول (بيع نسخة: كل مشترٍ يضع مفاتيحه من المتصفح) ──
@@ -329,19 +453,28 @@ def activate():
         code = request.form.get("code", "").strip()
         if kind not in ("trial", "permanent"):
             flash("اختر نوع النسخة (تجريبية أو دائمة) أولاً.", "error")
+            db.add_diag("web:activate", f"نوع نسخة غير صالح: {kind!r}")
         elif not code:
             flash("أدخل كود التفعيل الذي سلّمه لك البائع.", "error")
+            db.add_diag("web:activate", "محاولة تفعيل بدون كود")
         else:
             info = license_mod.validate(code)
             if info is None:
                 flash("الكود غير صالح أو منتهي الصلاحية.", "error")
+                db.add_diag("web:activate", f"كود غير صالح/منتهي محاولة: {kind}")
             elif info["kind"] != kind:
                 flash("هذا الكود غير صالح للنوع الذي اخترته — تأكد من نوع النسخة.", "error")
+                db.add_diag("web:activate", f"عدم تطابق نوع الكود: {kind} مقابل {info['kind']}")
             else:
                 ok, msg = license_mod.apply_code(code)
                 flash(msg, "success" if ok else "error")
                 db.add_access_log(
                     "activate", f"تفعيل نسخة {kind}", _client_ip(), _user_agent()
+                )
+                db.add_diag(
+                    "web:activate",
+                    ("نجح" if ok else "فشل") + f" تفعيل نسخة {kind}"
+                    + (f" — {msg[:160]}" if not ok else ""),
                 )
                 if not config.is_configured():
                     return redirect(url_for("setup_page"))
@@ -362,7 +495,308 @@ def reset_store():
     db.reset_all_data()
     _request_bot_restart()
     session.clear()
-    return redirect(url_for("activate"))
+    return redirect(url_for("login"))
+
+
+# ── صفحة المدير/البيع (للبائع فقط) ──────────────────────────
+
+
+def _manager_allowed() -> bool:
+    """صفحة المدير محمية بدورها المنفصل (يُمنح فقط عبر رمز المدير في شاشة
+    الدخول) — لا يملكه المشتري عبر كوده أبداً."""
+    return session.get("role") == "manager" and bool(session.get("manager_ok"))
+
+
+@app.route("/manager")
+@login_required
+def manager_page():
+    if not _manager_allowed():
+        return redirect(url_for("index"))
+    codes = license_mod.list_codes_with_usage()
+    # فرز: غير المستعمل ثم المستعمل، والدائمة أولاً داخل كل مجموعة
+    order = {"permanent": 0, "trial": 1}
+    codes.sort(key=lambda c: (c["used"], order.get(c["kind"], 9), c["code"]))
+    base_url = config.DASHBOARD_PUBLIC_URL or request.host_url.rstrip("/")
+    for c in codes:
+        if c["expired"]:
+            c["remaining_text"] = "انتهى"
+        elif c["used"] and c["remaining"] is not None:
+            hrs = c["remaining"] / 3600
+            c["remaining_text"] = (
+                f"{hrs / 24:.1f} يوم" if hrs >= 24 else f"{hrs:.1f} ساعة"
+            )
+        elif c["used"] and c["kind"] == "permanent":
+            c["remaining_text"] = "دائمة — بلا انتهاء"
+        else:
+            c["remaining_text"] = "—"
+        c["first_used_text"] = (
+            datetime.fromtimestamp(c["first_used"]).astimezone().strftime("%Y-%m-%d %H:%M")
+            if c["first_used"]
+            else "—"
+        )
+        c["last_seen_text"] = (
+            datetime.fromtimestamp(c["last_seen"]).astimezone().strftime("%Y-%m-%d %H:%M")
+            if c.get("last_seen")
+            else "—"
+        )
+        c["last_login_text"] = (
+            datetime.fromtimestamp(c["last_login"]).astimezone().strftime("%Y-%m-%d %H:%M")
+            if c.get("last_login")
+            else "—"
+        )
+        # رابط الدخول المباشر + سجل تشخيص خاص بكل مشترٍ
+        c["link_token"] = license_mod.active_link_token(c["code"]) if c["used"] else None
+        c["link_url"] = f"{base_url}/d/{c['link_token']}" if c["link_token"] else ""
+        c["diag_rows"] = (
+            db.get_diag_logs(20, code_hash=license_mod.digest(c["code"]))
+            if c["used"]
+            else []
+        )
+        # سجل قناة/مجموعة المشترِي + رابط الدخول المعروض لها
+        ch = db.get_buyer_channel(license_mod.digest(c["code"])) if c["used"] else None
+        c["channel"] = ch or {}
+        entry = ""
+        if ch and ch.get("channel_link"):
+            parsed = bridge.parse_channel_link(ch["channel_link"])
+            if parsed and parsed["kind"] == "public":
+                entry = f"https://t.me/{parsed['username']}"
+            elif ch.get("generated_link"):
+                entry = ch["generated_link"]
+        c["entry_link"] = entry
+    buyers_list = [c for c in codes if c["used"]]
+    st = license_mod.state()
+    st["active_code"] = st.get("code", "")
+    active_buyer = next((b for b in buyers_list if b["code"] == st["active_code"]), None)
+    return render_template(
+        "manager.html",
+        st=st,
+        status_text=_license_status_text(st),
+        active_buyer_name=(active_buyer or {}).get("buyer_name") or "",
+        base_url=base_url,
+        codes=codes,
+        buyers=buyers_list,
+        buyers_count_used=len(buyers_list),
+        pw_set_count=sum(1 for b in buyers_list if b["has_password"]),
+        link_count=sum(1 for b in buyers_list if b.get("link_token")),
+        unused_count=sum(1 for c in codes if not c["used"]),
+        diag_logs=db.get_diag_logs(60),
+        diag_count=db.count_diag_logs(),
+        manager_password_set=bool(config.MANAGER_PASSWORD),
+        channel_kind_labels={
+            "public_channel": "قناة عامة",
+            "public_group": "مجموعة عامة",
+            "private_group": "مجموعة خاصة",
+            "private_channel": "قناة خاصة",
+            "unknown": "غير محددة",
+        },
+    )
+
+
+def _manager_required(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        if not session.get("admin") or not _manager_allowed():
+            return redirect(url_for("login"))
+        return f(*args, **kwargs)
+
+    return wrapper
+
+
+@app.post("/manager/code/new")
+@_manager_required
+def manager_code_new():
+    kind = request.form.get("kind", "").strip().lower()
+    note = request.form.get("note", "").strip()
+    if kind not in ("trial", "permanent"):
+        flash("اختر نوع الكود أولاً.", "error")
+        return redirect(url_for("manager_page"))
+    try:
+        code = license_mod.new_sale_code(kind, note)
+    except RuntimeError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("manager_page"))
+    db.add_diag("web:manager", f"توليد كود {kind}: {code}")
+    flash(f"تم توليد كود {('تجريبي' if kind == 'trial' else 'دائم')}: {code}", "success")
+    return redirect(url_for("manager_page"))
+
+
+@app.post("/manager/code/delete")
+@_manager_required
+def manager_code_delete():
+    code = request.form.get("code", "").strip()
+    db.delete_license_code(code)
+    db.add_diag("web:manager", f"حذف كود بيع: {code}")
+    flash("تم حذف الكود.", "success")
+    return redirect(url_for("manager_page"))
+
+
+@app.post("/manager/diag/clear")
+@_manager_required
+def manager_diag_clear():
+    n = db.clear_diag_logs()
+    flash(f"تم مسح {n} سجل تشخيص.", "success")
+    return redirect(url_for("manager_page"))
+
+
+@app.post("/manager/link/new")
+@_manager_required
+def manager_link_new():
+    code = request.form.get("code", "").strip()
+    if not code:
+        flash("اختر كوداً أولاً.", "error")
+        return redirect(url_for("manager_page"))
+    try:
+        token = license_mod.create_login_link(code)
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("manager_page"))
+    base = config.DASHBOARD_PUBLIC_URL or request.host_url.rstrip("/")
+    url = f"{base}/d/{token}"
+    license_mod.diag_for_code(code, "web:link", "رابط دخول جديد مولّد من صفحة المدير")
+    flash(f"تم توليد رابط الدخول: {url}", "success")
+    return redirect(url_for("manager_page"))
+
+
+@app.post("/manager/link/revoke")
+@_manager_required
+def manager_link_off():
+    code = request.form.get("code", "").strip()
+    n = license_mod.revoke_login_link(code)
+    if n:
+        license_mod.diag_for_code(code, "web:link", "تم إيقاف رابط الدخول المباشر")
+        flash("تم إيقاف رابط الدخول.", "success")
+    else:
+        flash("لم يوجد رابط نشط لهذا الكود.", "message")
+    return redirect(url_for("manager_page"))
+
+
+def _channel_kind_label(kind: str) -> str:
+    labels = {
+        "public_channel": "قناة عامة",
+        "public_group": "مجموعة عامة",
+        "private_group": "مجموعة خاصة",
+        "private_channel": "قناة خاصة",
+        "unknown": "غير محددة",
+    }
+    return labels.get(kind or "", kind or "")
+
+
+@app.post("/manager/channel/save")
+@_manager_required
+def manager_channel_save():
+    """حفظ/تعديل رابط قناة أو مجموعة مشترٍ (عامة أو رابط دعوة خاصة)."""
+    code = request.form.get("code", "").strip()
+    channel_link = request.form.get("channel_link", "").strip()
+    if not code or license_mod.validate(code) is None:
+        flash("هذا الكود غير صالح للمدير.", "error")
+        return redirect(url_for("manager_page"))
+    if channel_link and bridge.parse_channel_link(channel_link) is None:
+        flash(
+            "الرابط غير معروف — استخدم t.me/الاسم (قناة/مجموعة عامة) "
+            "أو t.me/+... (رابط دعوة خاصة).",
+            "error",
+        )
+        return redirect(url_for("manager_page"))
+    db.save_buyer_channel(license_mod.digest(code), channel_link)
+    if channel_link:
+        license_mod.diag_for_code(
+            code, "web:channel", "رابط قناة/مجموعة المشترِي محفوظ من صفحة المدير"
+        )
+        flash("تم حفظ رابط القناة — اضغط «تحقق وانضم» لتحليله.", "success")
+    else:
+        license_mod.diag_for_code(code, "web:channel", "تم مسح رابط قناة/مجموعة المشترِي")
+        flash("تم مسح الرابط.", "message")
+    return redirect(url_for("manager_page"))
+
+
+@app.post("/manager/channel/check")
+@_manager_required
+def manager_channel_check():
+    """يدخل البوت إلى قناة/مجموعة المشترِي ويحلل نوعها (بدون إشعار لصاحبها)."""
+    code = request.form.get("code", "").strip()
+    if not code or license_mod.validate(code) is None:
+        flash("هذا الكود غير صالح للمدير.", "error")
+        return redirect(url_for("manager_page"))
+    ph = license_mod.digest(code)
+    row = db.get_buyer_channel(ph)
+    if not row or not row["channel_link"]:
+        flash("لا يوجد رابط محفوظ لهذا المشترِي — احفظه أولاً.", "error")
+        return redirect(url_for("manager_page"))
+    result = bridge.channel_join(row["channel_link"])
+    if result["ok"]:
+        db.update_buyer_channel(
+            ph,
+            channel_kind=result["kind"],
+            channel_title=result["title"],
+            bot_joined=1 if result["joined"] else 0,
+            bot_admin=1 if result["bot_admin"] else 0,
+            last_error="",
+            checked_at=db.now_iso(),
+        )
+        license_mod.diag_for_code(
+            code,
+            "web:channel",
+            f"دخول البوت وتحليل قناة المشترِي: {result['kind']} — {result.get('title') or ''}",
+        )
+        flash(
+            f"البوت داخل القناة/المجموعة ✓ ({_channel_kind_label(result['kind'])})"
+            + (f" — {result.get('title') or ''}".strip() if result.get("title") else ""),
+            "success",
+        )
+    else:
+        db.update_buyer_channel(ph, last_error=result["error"], checked_at=db.now_iso())
+        license_mod.diag_for_code(
+            code, "web:channel", f"فشل تحليل قناة المشترِي: {result['error'][:120]}"
+        )
+        flash(result["error"], "error")
+    return redirect(url_for("manager_page"))
+
+
+@app.post("/manager/channel/link")
+@_manager_required
+def manager_channel_link():
+    """توليد رابط دخول (دعوة) جديد لقناة/مجموعة مشترٍ — يتطلب أن يكون البوت أدمنًا."""
+    code = request.form.get("code", "").strip()
+    if not code or license_mod.validate(code) is None:
+        flash("هذا الكود غير صالح للمدير.", "error")
+        return redirect(url_for("manager_page"))
+    ph = license_mod.digest(code)
+    row = db.get_buyer_channel(ph)
+    if not row or not row["channel_link"]:
+        flash("لا يوجد رابط محفوظ لهذا المشترِي — احفظه أولاً.", "error")
+        return redirect(url_for("manager_page"))
+    result = bridge.channel_generate_link(row["channel_link"])
+    if result["ok"]:
+        db.update_buyer_channel(
+            ph, generated_link=result["link"], last_error="", checked_at=db.now_iso()
+        )
+        license_mod.diag_for_code(code, "web:channel", "توليد رابط دخول جديد لقناة المشترِي")
+        flash(f"رابط الدخول الجديد للقناة: {result['link']}", "success")
+    else:
+        license_mod.diag_for_code(
+            code, "web:channel", f"فشل توليد رابط القناة: {result['error'][:120]}"
+        )
+        flash(result["error"], "error")
+    return redirect(url_for("manager_page"))
+
+
+@app.route("/d/<token>")
+def direct_login(token):
+    """دخول مباشر لمشترٍ عبر رابط مولّد من صفحة المدير — يُنشر في أي قناة/
+    مجموعة/خاص لديه. الرابط يفتح اللوحة للمشتري مباشرة بلا كود ولا كلمة مرور."""
+    code = license_mod.redeem_login_link(token)
+    if code is None:
+        flash("رابط الدخول غير صالح أو تم إيقافه — اطلب رابطاً جديداً من البائع.", "error")
+        return redirect(url_for("login"))
+    ok, msg = license_mod.apply_code(code)
+    if not ok:
+        license_mod.note_buyer_fail(code)
+        license_mod.diag_for_code(code, "web:link", f"رابط دخول مرفوض: {msg[:140]}")
+        flash(msg, "error")
+        return redirect(url_for("login"))
+    _buyer_login(code, via_link=True)
+    flash("تم دخولك عبر الرابط — أهلاً بك.", "success")
+    return redirect(url_for("index"))
 
 
 @app.route("/logout")
@@ -2189,3 +2623,17 @@ def support_cleanup_old():
     deleted = db.delete_old_replied_support(days)
     flash(f"تم حذف {deleted} رسالة مُجاب عنها أقدم من {days} يوم.", "success")
     return redirect(url_for("support_page"))
+
+
+@app.errorhandler(500)
+def _on_internal_error(err):
+    """يسجّل أي خطأ داخلي في اللوحة إلى سجل التشخيص (المدير) بقسم web:."""
+    try:
+        endpoint = request.endpoint or "?"
+        db.add_diag(f"web:{endpoint}", f"{type(err).__name__}: {err}")
+    except Exception:
+        pass
+    return render_template(
+        "restarting.html",
+        message="حدث خطأ داخلي في اللوحة — حاول مرة أخرى بعد لحظات.",
+    ), 500

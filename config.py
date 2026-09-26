@@ -39,6 +39,9 @@ ADMIN_IDS = _int_list(os.getenv("ADMIN_IDS", ""))
 CHANNEL_ID = _int_env("CHANNEL_ID", 0)
 DEADLINE_HOURS = _int_env("DEADLINE_HOURS", 48)
 DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "")
+# كلمة مرور صفحة المدير/البيع — لا يراها المشتري ولا يُغيّرها من معالج الإعداد.
+# إن تُركت فارغة تُستخدم DASHBOARD_PASSWORD نفسها كبديل.
+MANAGER_PASSWORD = os.getenv("MANAGER_PASSWORD", "").strip() or None
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")
 DASHBOARD_HOST = (os.getenv("DASHBOARD_HOST", "127.0.0.1") or "127.0.0.1").strip() or "127.0.0.1"
 DASHBOARD_PORT = _int_env("DASHBOARD_PORT", 5000)
@@ -50,19 +53,27 @@ if RAILWAY_PORT:
     DASHBOARD_PORT = int(RAILWAY_PORT)
 PROXY_URL = os.getenv("PROXY_URL", "").strip() or None
 
+# رابط عام (اختياري) للوحة يُستخدم لبناء روابط الدخول المباشر للمشترين من
+# القنوات/المجموعات. إن تُرك فارغاً يُبنى الرابط تلقائياً من العنوان الذي
+# فتح به البائع صفحة المدير نفسها (مثلاً نطاق Railway المخصص).
+DASHBOARD_PUBLIC_URL = (os.getenv("DASHBOARD_PUBLIC_URL", "") or "").strip().rstrip("/")
+
 # Telegram UserBot (Telethon) — optional, for syncing all group members
 TB_API_ID = _int_env("TB_API_ID", 0)
 TB_API_HASH = os.getenv("TB_API_HASH", "").strip()
 TB_PHONE = "".join(os.getenv("TB_PHONE", "").split())
-TB_SESSION_DIR = BASE_DIR / "userbot"
-TB_SESSION_DIR.mkdir(exist_ok=True)
 TB_SESSION_NAME = os.getenv("TB_SESSION_NAME", "members_session")
 
+# كل بيانات المشروع الحساسة داخل data/ ليبقى فوليوم استضافة واحد (نقطة التركيب
+# /app/data) كافياً لحفظها كلها عبر كل إعادة نشر: قاعدة البيانات + صور المشتركين
+# + جلسات الـ UserBot + السجلات.
 DATA_DIR = BASE_DIR / "data"
-UPLOADS_DIR = BASE_DIR / "uploads"
+UPLOADS_DIR = DATA_DIR / "uploads"
+DB_PATH = DATA_DIR / "bot.db"
 DATA_DIR.mkdir(exist_ok=True)
 UPLOADS_DIR.mkdir(exist_ok=True)
-DB_PATH = DATA_DIR / "bot.db"
+TB_SESSION_DIR = DATA_DIR / "userbot"
+TB_SESSION_DIR.mkdir(exist_ok=True)
 
 # علم إعادة تشغيل البوت فقط (بدل قتل العملية كلها)
 RESTART_FLAG = DATA_DIR / "restart.flag"

@@ -54,30 +54,6 @@
     </p>
     <a class="btn btn-outline" href="{{ url_for('setup_page') }}">⚙️ معالج الإعداد الأول</a>
   </div>
-  <div class="card settings-form">
-    <h3 style="font-size:15px;margin:0 0 8px">🔒 حالة الترخيص</h3>
-    {% if license_state.owner %}
-      <p class="settings-hint">وضع المالك — بلا قيود (لا يوجد سر توقيع LICENSE_SECRET).</p>
-    {% elif license_state.valid %}
-      {% if license_state.trial %}
-        <p class="settings-hint" style="color:#f59e0b">
-          نسخة تجريبية — متبقٍ {{ '%.1f'|format((license_state.remaining_days or 0) * 24) }} ساعة، جميع الصلاحيات بلا حد للأعضاء.
-        </p>
-      {% else %}
-        <p class="settings-hint" style="color:#10b981">
-          نسخة دائمة مفعّلة{% if license_state.customer %} — العميل: {{ license_state.customer }}{% endif %}.
-        </p>
-      {% endif %}
-    {% else %}
-      <p class="settings-hint" style="color:#ef4444">النسخة غير مفعّلة أو انتهت صلاحيتها.</p>
-    {% endif %}
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <a class="btn btn-outline" href="{{ url_for('activate') }}">🔑 شاشة التفعيل/إدخال كود</a>
-      <form method="post" action="{{ url_for('reset_store') }}" onsubmit="return confirm('تحذير! سيتم مسح كل الأعضاء والرسائل والسجلات والإعدادات استعداداً لعميل جديد. هل أنت متأكد؟');">
-        <button class="btn" type="submit" style="background:#3f1620;color:#fca5a5;border:1px solid rgba(239,68,68,.4)">🗑️ إعادة تهيئة لعميل جديد</button>
-      </form>
-    </div>
-  </div>
 </section>
 
 <section class="sett-sec" id="sec-fields">

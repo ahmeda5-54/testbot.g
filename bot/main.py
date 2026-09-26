@@ -38,6 +38,14 @@ def _fresh_router(module) -> Router:
     return importlib.reload(module).router
 
 
+def _diag(section: str, detail: str) -> None:
+    """يسجّل خطأ تشخيصياً في سجل المدير دون أن يكسر سير العمل أبداً."""
+    try:
+        db.add_diag(section, detail)
+    except Exception:
+        pass
+
+
 async def _channel_diagnostic(bot: Bot) -> None:
     """يطبع حالة القناة والإعدادات في بداية التشغيل ليسهل تتبع المشاكل."""
     try:
@@ -102,6 +110,7 @@ async def _expiry_loop(bot: Bot) -> None:
                 )
         except Exception as exc:
             print(f"[expiry] loop error: {exc!r}", flush=True)
+            _diag("bot:expiry", f"{type(exc).__name__}: {exc}")
         await asyncio.sleep(60)
 
 
@@ -140,6 +149,7 @@ async def _license_watch() -> None:
                     await _notify(st)
         except Exception as exc:
             print(f"[license] watch error: {exc!r}", flush=True)
+            _diag("bot:license-watch", f"{type(exc).__name__}: {exc}")
         await asyncio.sleep(300)
 
 
@@ -182,6 +192,7 @@ async def _posting_loop(bot: Bot) -> None:
                     )
         except Exception as exc:
             print(f"[posting] loop error: {exc!r}", flush=True)
+            _diag("bot:posting", f"{type(exc).__name__}: {exc}")
         await asyncio.sleep(45)
 
 
@@ -267,6 +278,7 @@ async def _reminder_loop(bot: Bot) -> None:
                     db.mark_reminder_sent(member["telegramUserId"], 2)
         except Exception as exc:
             print(f"[reminder] loop error: {exc!r}", flush=True)
+            _diag("bot:reminder", f"{type(exc).__name__}: {exc}")
         await asyncio.sleep(30)
 
 
@@ -306,8 +318,8 @@ async def _clone_loop(bot: Bot) -> None:
                     f"err={result.get('error')}",
                     flush=True,
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            _diag("bot:clone", f"{type(exc).__name__}: {exc}")
         await asyncio.sleep(60)
 
 
@@ -317,8 +329,9 @@ async def _heartbeat_loop(bot: Bot) -> None:
             await bot.get_me()
             db.set_setting("bot_online", "1")
             db.set_setting("bot_last_seen", db.now_iso())
-        except Exception:
+        except Exception as exc:
             db.set_setting("bot_online", "0")
+            _diag("bot:heartbeat", f"{type(exc).__name__}: {exc}")
         await asyncio.sleep(30)
 
 
@@ -328,6 +341,7 @@ async def _initial_membership_check() -> None:
         await bridge.check_all_members_task()
     except Exception as exc:
         print(f"[bot] initial membership check failed: {exc!r}", flush=True)
+        _diag("bot:initial-check", f"{type(exc).__name__}: {exc}")
 
 
 async def _restart_watcher(dispatchers: list[Dispatcher]) -> None:
@@ -383,6 +397,7 @@ async def _poll_and_recover(
             raise
         except Exception as exc:
             print(f"[bot] polling crashed: {exc!r}, restarting in 5s", flush=True)
+            _diag("bot:polling", f"{type(exc).__name__}: {exc}")
             await asyncio.sleep(5)
             continue
         # عاد بسلاسة = أُوقف لسبب ما؛ انتظر إنهاء watcher إن كان يعمل

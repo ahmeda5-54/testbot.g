@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>صفحة المدير — البيع والمتابعة</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/glass.css') }}?v=6">
+</head>
+<body class="manager-body">
+  <div class="orb a"></div><div class="orb b"></div><div class="orb c"></div>
+
+  <div class="manager-master">
+    <header class="manager-head glass">
+      <h1>🛠 صفحة المدير</h1>
+      <div class="acts">
+        <a class="btn btn-outline" href="{{ url_for('index') }}">↩ لوحة التحكم</a>
+        <a class="btn btn-outline" href="{{ url_for('logout') }}">تسجيل الخروج</a>
+      </div>
+    </header>
+
+    <div class="flash-wrap">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+          <div class="flash {{ category }}">{{ message }}</div>
+        {% endfor %}
+      {% endwith %}
+    </div>
+
+    {% if not manager_password_set %}
+    <div class="flash error" style="display:block">⚠️ لم تُضبط MANAGER_PASSWORD في .env — تُستخدم حالياً كلمة مرور اللوحة.
+      يُفضَّل ضبطها ليبقى الدخول هنا حصرياً لك أنت.</div>
+    {% endif %}
+
+    <section class="sett-sec" id="sec-state">
+      <h3 class="settings-section-title">الترخيص المُفعَّل حالياً على اللوحة</h3>
+      <div class="card settings-form">
+        <p class="settings-hint">{{ status_text }}</p>
+        <p class="settings-hint" style="margin-top:8px">
+          هذه حالة النسخة التي تحكم فتح اللوحة الآن — تتحدَّث تلقائياً عند دخول أي مشترٍ
+          بكود جديد من شاشة الدخول، أو عند دخوله عبر رابط مباشر من قناة/مجموعة.
+          الكود المتضمَّن بها: <b dir="ltr">{{ st.active_code or '—' }}</b>
+          {% if active_buyer_name %} — المشتري: <b>{{ active_buyer_name }}</b>{% endif %}
+          · <a href="{{ url_for('activate') }}" style="color:#5b6cff">شاشة التفعيل (تطبيق كود يدوياً)</a>
+        </p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <form method="post" action="{{ url_for('reset_store') }}"
+                onsubmit="return confirm('تحذير! سيتم مسح كل الأعضاء والرسائل والسجلات والإعدادات استعداداً لعميل جديد. هل أنت متأكد؟');">
+            <button class="btn" type="submit" style="background:#3f1620;color:#fca5a5;border:1px solid rgba(239,68,68,.4)">🗑️ إعادة تهيئة لعميل جديد</button>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <section class="sett-sec" id="sec-sales">
+      <h3 class="settings-section-title">البيع والأكواد</h3>
+      <div class="stats" style="grid-template-columns:repeat(3,1fr);margin-bottom:12px">
+        <div class="stat" style="--c:var(--o1)">
+          <span class="ic"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
+          <h3>المشترون (حسابات مفعّلة)</h3>
+          <p class="num">{{ buyers_count_used }}</p>
+          <small>منهم {{ pw_set_count }} ربطوا كلمة مرور · {{ link_count }} لهم رابط دخول مباشر</small>
+        </div>
+        <div class="stat" style="--c:var(--o3)">
+          <span class="ic"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M8 15h3"/></svg></span>
+          <h3>إجمالي الأكواد</h3>
+          <p class="num">{{ codes|length }}</p>
+          <small>ثابتة + مولّدة من هنا</small>
+        </div>
+        <div class="stat" style="--c:var(--warn)">
+          <span class="ic"><svg viewBox="0 0 24 24"><path d="M12 3l9 16H3l9-16z"/><path d="M12 10v4M12 17h.01"/></svg></span>
+          <h3>غير المستعملة</h3>
+          <p class="num">{{ unused_count }}</p>
+          <small>جاهزة للبيع القادم</small>
+        </div>
+      </div>
+
+      <form class="card settings-form" method="post" action="{{ url_for('manager_code_new') }}" style="margin-bottom:12px">
+        <h3 style="font-size:15px;margin:0 0 8px">➕ توليد كود بيع جديد</h3>
+        <label>نوع الكود</label>
+        <select name="kind">
+          <option value="trial">تجريبي — 24 ساعة من أول استعمال</option>
+          <option value="permanent">دائم — بلا انتهاء</option>
+        </select>
+        <label>ملاحظة (اختياري — اسم المشتري/العميل)</label>
+        <input type="text" name="note" maxlength="200" placeholder="مثال: عميل فلان">
+        <button class="btn btn-check" type="submit">توليد الكود</button>
+      </form>
+
+      <div class="card">
+        <div class="card-head"><h3>📋 الأكواد وحالة استخدامها</h3></div>
+        {% if codes %}
+        <div class="table-wrap" style="max-height:480px">
+          <table class="data-table">
+            <thead>
+              <tr><th>الكود</th><th>النوع</th><th>المشتري / الملاحظة</th><th>الحالة</th><th>أول استعمال</th><th>المتبقي/المنقضي</th><th></th></tr>
+            </thead>
+            <tbody>
+            {% for c in codes %}
+              <tr>
+                <td dir="ltr" style="white-space:nowrap">
+                  <b>{{ c.code }}</b>
+                  {% if c.stored %}
+                  <button class="copy-btn" data-copy="{{ c.code }}">نسخ</button>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if c.kind == 'permanent' %}<span class="chip chip-ok">دائم</span>
+                  {% else %}<span class="chip chip-warn">تجريبي</span>{% endif %}
+                </td>
+                <td>{{ c.buyer_name or (c.note if c.stored else '') or '—' }}</td>
+                <td>
+                  {% if not c.used %}<span class="chip chip-neutral">غير مستعمل</span>
+                  {% elif c.expired %}<span class="chip chip-bad">منتهي/متجاوز</span>
+                  {% else %}<span class="chip chip-ok">شغّل</span>{% endif %}
+                </td>
+                <td>{% if c.first_used %}{{ c.first_used_text }}{% else %}—{% endif %}</td>
+                <td>{{ c.remaining_text }}</td>
+                <td>
+                  {% if c.stored %}
+                  <form method="post" action="{{ url_for('manager_code_delete') }}"
+                        onsubmit="return confirm('حذف هذا الكود نهائياً؟');" style="display:inline">
+                    <input type="hidden" name="code" value="{{ c.code }}">
+                    <button class="btn btn-sm" type="submit">🗑</button>
+                  </form>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="settings-hint">لا توجد أكواد بعد — ولّد أول كود من النموذج أعلاه.</p>
+        {% endif %}
+      </div>
+    </section>
+
+    <section class="sett-sec" id="sec-buyers">
+      <h3 class="settings-section-title">🧾 سجل المشترين وتشخيصهم</h3>
+      <div class="card">
+        <div class="card-head">
+          <h3>كل مشترٍ بدقة: دخوله · إخفاقاته · رابط دخول مباشر يُرسل من أي قناة/مجموعة/خاص</h3>
+        </div>
+        {% if buyers %}
+        <div class="table-wrap" style="max-height:600px">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>المشتري</th><th>الكود</th><th>النوع</th><th>كلمة المرور</th>
+                <th>أول دخول</th><th>آخر دخول</th><th>الآيبي (IP)</th>
+                <th>دخول / فشل</th><th>الحالة / المتبقي</th><th>رابط الدخول</th><th>تشخيص</th>
+              </tr>
+            </thead>
+            <tbody>
+            {% for b in buyers %}
+              <tr>
+                <td>{{ b.buyer_name or '—' }}</td>
+                <td dir="ltr" style="white-space:nowrap"><b>{{ b.code }}</b></td>
+                <td>
+                  {% if b.kind == 'permanent' %}<span class="chip chip-ok">دائم</span>
+                  {% else %}<span class="chip chip-warn">تجريبي</span>{% endif %}
+                </td>
+                <td>
+                  {% if b.has_password %}<span class="chip chip-ok">مضبوطة ✓</span>
+                  {% else %}<span class="chip chip-neutral">لم تُضبط</span>{% endif %}
+                </td>
+                <td style="white-space:nowrap">{{ b.first_used_text }}</td>
+                <td style="white-space:nowrap">{{ b.last_login_text }}</td>
+                <td dir="ltr">{{ b.last_ip or '—' }}</td>
+                <td>
+                  <span class="chip chip-ok">{{ b.login_count }} دخول</span>
+                  {% if b.fail_count %}<span class="chip chip-bad">{{ b.fail_count }} فشل</span>{% endif %}
+                </td>
+                <td>
+                  {% if b.expired %}<span class="chip chip-bad">منتهي</span>
+                  {% else %}<span class="chip chip-ok">شغّال</span>{% endif %}
+                  <span dir="ltr" style="white-space:nowrap">{{ b.remaining_text }}</span>
+                </td>
+                <td style="min-width:150px">
+                  {% if b.link_token %}
+                    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                      <span dir="ltr" style="font-size:11px;color:#94a3b8">{{ b.link_token[:14] }}…</span>
+                      <button class="copy-btn" data-copy="{{ b.link_url }}">نسخ الرابط</button>
+                      <form method="post" action="{{ url_for('manager_link_off') }}" style="display:inline">
+                        <input type="hidden" name="code" value="{{ b.code }}">
+                        <button class="btn btn-sm" type="submit" title="إيقاف الرابط">⏹</button>
+                      </form>
+                    </div>
+                  {% else %}
+                    <form method="post" action="{{ url_for('manager_link_new') }}" style="display:inline">
+                      <input type="hidden" name="code" value="{{ b.code }}">
+                      <button class="btn btn-check btn-sm" type="submit">➕ توليد رابط</button>
+                    </form>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if b.diag_rows %}
+                  <details>
+                    <summary style="cursor:pointer;color:#5b6cff">سجل تشخيص ({{ b.diag_rows|length }})</summary>
+                    <ul style="font-size:12px;color:#cbd5e1;line-height:1.9;padding-right:14px;margin:6px 0 0">
+                      {% for log in b.diag_rows %}
+                      <li>
+                        <span dir="ltr" style="color:#64748b">{{ fmt(log.createdAt) }}</span>
+                        <span class="chip chip-neutral" dir="ltr">{{ log.section }}</span>
+                        {{ log.message }}
+                      </li>
+                      {% endfor %}
+                    </ul>
+                  </details>
+                  {% else %}
+                  <span style="color:#64748b">لا سجلات</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="settings-hint">لم يسجّل أي مشترٍ دخولاً بعد — عند أول دخول بأي كود سيظهر هنا كامل تشخيصه بدقة.</p>
+        {% endif %}
+      </div>
+    </section>
+
+    <section class="sett-sec" id="sec-channels">
+      <h3 class="settings-section-title">📡 قنوات المشترين — روابط الدخول</h3>
+      <div class="card">
+        <div class="card-head">
+          <h3>سجّل قناة/مجموعة أي مشترٍ (عامة أو خاصة أو مجموعة) واحصل على رابط دخول مباشر لها</h3>
+        </div>
+        <p class="settings-hint">
+          الصق رابط القناة في حقل «رابطها المحفوظ» ثم اضغط «🔍 تحقق وانضم» ليدخل إليها البوت ورابط الدخول يظهر جاهزاً:
+          <br>• <b>قناة/مجموعة عامة</b> → رابط الدخول جاهز فوراً (t.me/…).
+          <br>• <b>مجموعة خاصة</b> → البوت يدخلها عبر رابط الدعوة، وزر «توليد رابط» يصنع رابط دعوة جديداً إن كان البوت أدمنًا فيها.
+          <br>• <b>قناة خاصة</b> → حدٌّ من تلغرام: لا يستطيع أي بوت دخولها بنفسه سوى أن يضيفه مالكها أدمنًا من داخلها.
+        </p>
+        {% if buyers %}
+        <div class="table-wrap" style="max-height:600px">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>المشتري</th><th>حالة القناة / المجموعة</th><th>رابطها المحفوظ</th>
+                <th>رابط الدخول</th><th>إجراءات</th>
+              </tr>
+            </thead>
+            <tbody>
+            {% for b in buyers %}
+              <tr>
+                <td style="white-space:nowrap">
+                  {{ b.buyer_name or '—' }}
+                  <br><span dir="ltr" style="font-size:11px;color:#64748b">{{ b.code }}</span>
+                </td>
+                <td>
+                  {% if b.channel.channel_kind %}
+                    <span class="chip chip-ok">{{ channel_kind_labels.get(b.channel.channel_kind, b.channel.channel_kind) }}</span>
+                  {% else %}
+                    <span class="chip chip-neutral">لم تُحلل بعد</span>
+                  {% endif %}
+                  {% if b.channel.channel_title %}
+                    <div style="font-size:11px;color:#cbd5e1">{{ b.channel.channel_title }}</div>
+                  {% endif %}
+                  {% if b.channel.bot_joined %}<span class="chip chip-ok">البوت بداخلها ✓</span>
+                  {% else %}<span class="chip chip-warn">البوت خارجها</span>{% endif %}
+                  {% if b.channel.bot_admin %}<span class="chip chip-ok">أدمن ✓</span>{% endif %}
+                  {% if b.channel.last_error %}
+                    <div style="font-size:11px;color:#f87171" title="{{ b.channel.last_error }}">{{ b.channel.last_error[:80] }}</div>
+                  {% endif %}
+                </td>
+                <td dir="ltr" style="font-size:11px">
+                  <form method="post" action="{{ url_for('manager_channel_save') }}"
+                        style="display:flex;gap:4px;align-items:center">
+                    <input type="hidden" name="code" value="{{ b.code }}">
+                    <input type="text" name="channel_link" value="{{ b.channel.channel_link or '' }}"
+                           placeholder="t.me/… أو t.me/+…"
+                           style="width:180px;padding:5px;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#e2e8f0">
+                    <button class="btn btn-sm" type="submit">حفظ</button>
+                  </form>
+                </td>
+                <td dir="ltr" style="white-space:nowrap">
+                  {% if b.entry_link %}
+                    <span style="font-size:11px" title="{{ b.entry_link }}">{{ b.entry_link[:40] }}{% if b.entry_link|length > 40 %}…{% endif %}</span>
+                    <button class="copy-btn" data-copy="{{ b.entry_link }}">نسخ</button>
+                  {% else %}
+                    <span style="color:#64748b">—</span>
+                  {% endif %}
+                </td>
+                <td>
+                  <div style="display:flex;gap:6px;flex-wrap:wrap">
+                    <form method="post" action="{{ url_for('manager_channel_check') }}" style="display:inline">
+                      <input type="hidden" name="code" value="{{ b.code }}">
+                      <button class="btn btn-check btn-sm" type="submit">🔍 تحقق وانضم</button>
+                    </form>
+                    <form method="post" action="{{ url_for('manager_channel_link') }}" style="display:inline">
+                      <input type="hidden" name="code" value="{{ b.code }}">
+                      <button class="btn btn-sm" type="submit">🔗 توليد رابط</button>
+                    </form>
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="settings-hint">لم يسجّل أي مشترٍ دخولاً بعد — عند أول دخول سيظهر هنا لإضافة قناته والحصول على رابط الدخول لها.</p>
+        {% endif %}
+      </div>
+    </section>
+
+    <section class="sett-sec" id="sec-diag">
+      <h3 class="settings-section-title">🔍 سجل التشخيص (أين وقعت المشكلة؟)</h3>
+      <div class="card settings-form">
+        <p class="settings-hint">
+          يُسجَّل هنا تلقائياً كل خطأ من أقسام النظام (البوت، اللوحة، الترخيص) مع القسم والوقت —
+          لمعرفة أين حصلت المشكلة عند أي مشترٍ بدقة. المجموع: <strong>{{ diag_count }}</strong> سجل.
+        </p>
+        {% if diag_logs %}
+        <details>
+          <summary class="settings-hint">🕘 عرض آخر {{ diag_logs|length }} سجل</summary>
+          <table class="data-table">
+            <thead><tr><th>الوقت</th><th>القسم</th><th>التفاصيل</th></tr></thead>
+            <tbody>
+            {% for log in diag_logs %}
+              <tr>
+                <td style="white-space:nowrap">{{ fmt(log.createdAt) }}</td>
+                <td><span class="chip chip-neutral" dir="ltr">{{ log.section }}</span></td>
+                <td style="max-width:420px">{{ log.message }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </details>
+        <form method="post" action="{{ url_for('manager_diag_clear') }}"
+              onsubmit="return confirm('مسح كل سجل التشخيص؟');">
+          <button class="btn" type="submit">🗑 مسح السجل</button>
+        </form>
+        {% else %}
+        <p class="settings-hint">لا أخطاء مسجلة — النظام يعمل بنظافة. 🎉</p>
+        {% endif %}
+      </div>
+    </section>
+  </div>
+
+  <script>
+    document.querySelectorAll('.flash-wrap .flash').forEach(el => {
+      setTimeout(() => { el.classList.add('hide'); }, 4200);
+    });
+    document.querySelectorAll('.copy-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        navigator.clipboard.writeText(btn.dataset.copy).then(() => {
+          const old = btn.textContent;
+          btn.textContent = '✓ تم النسخ';
+          setTimeout(() => { btn.textContent = old; }, 1400);
+        });
+      });
+    });
+  </script>
+</body>
+</html>

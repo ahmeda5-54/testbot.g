@@ -403,7 +403,7 @@ def license_admin_warning(st: dict) -> str:
     if st["trial"] and st["remaining_days"] is not None:
         return (
             "🔒 تنبيه الترخيص: نسخة تجريبية نشطة.\n"
-            + f"المتبقي {st['remaining_days']:.1f} يوم — سقف الأعضاء {st['max_members']}.\n"
+            + f"المتبقي {st['remaining_days']:.1f} يوم — جميع الصلاحيات مفعّلة بلا حد للأعضاء.\n"
             + "جهّز الترقية للنسخة الدائمة عند الحاجة."
         )
     return ""

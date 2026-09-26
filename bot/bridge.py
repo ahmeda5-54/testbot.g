@@ -482,3 +482,169 @@ def check_all_members() -> bool:
     except Exception as exc:
         _debug(f"[sync-error] {exc!r}")
         return False
+
+
+def parse_channel_link(link: str) -> Optional[dict]:
+    """يحلل رابط/اسم قناة أو مجموعة دون أي اتصال بالشبكة.
+
+    يقبل: t.me/username | https://t.me/username | @username (عام)
+          t.me/+HASH | t.me/joinchat/HASH        (خاص — رابط دعوة)
+    يرجع dict {ref, kind, username} أو None إن كانت صيغة غير معروفة.
+    """
+    import re
+
+    raw = (link or "").strip()
+    if not raw:
+        return None
+    if raw.startswith("@"):
+        name = raw[1:]
+        if name:
+            return {"ref": raw, "kind": "public", "username": name}
+        return None
+    m = re.match(
+        r"^(?:https?://)?(?:t\.me|telegram\.me|telegram\.dog)/(\S+)$", raw
+    )
+    if not m:
+        return None
+    path = m.group(1).split("?")[0].strip("/")
+    if not path:
+        return None
+    if path.startswith("s/"):
+        path = path[2:]
+    if path.startswith("+") or path.startswith("joinchat/"):
+        return {"ref": raw, "kind": "private", "username": ""}
+    name = path.split("/")[0].lstrip("@")
+    if not name or not re.match(r"^[A-Za-z0-9_]+$", name):
+        return None
+    return {"ref": "@" + name, "kind": "public", "username": name}
+
+
+def _friendly_join_error(message: str) -> str:
+    low = (message or "").lower()
+    if "already_participant" in low:
+        return "البوت داخل القناة/المجموعة سابقاً."
+    if "chat_private" in low or "channel_private" in low or "private channel" in low:
+        return "قناة خاصة — لا يستطيع البوت الدخول إليها بنفسه (حد من تلغرام). أضِفه أدمنًا من داخل القناة، أو استخدم رابطًا عامًا."
+    if "chat not found" in low or "username not occupied" in low:
+        return "المعرف غير موجود — تأكد من اسم القناة/المجموعة."
+    if "invite_hash_expired" in low or "invite_hash_invalid" in low:
+        return "رابط الدعوة غير صالح أو ملغي أو منتهٍ."
+    if "user_banned" in low:
+        return "البوت محظور من الدخول إلى هذه القناة/المجموعة."
+    if "flood" in low:
+        return "طلبات كثيرة جداً — حاول بعد قليل."
+    return str(message or "خطأ غير معروف")
+
+
+async def _channel_join(link: str) -> dict:
+    """يدخل البوت إلى القناة/المجموعة (عامة عبر الاسم، خاصة عبر رابط الدعوة)
+    ثم يحلل نوعها وموقعه داخلها (مُصغي/عضو/أدمن)."""
+    parsed = parse_channel_link(link)
+    if parsed is None:
+        return {
+            "ok": False,
+            "error": "الرابط غير معروف — استخدم t.me/الاسم (عام) أو t.me/+... (رابط دعوة خاصة).",
+        }
+    ref = parsed["ref"]
+    my_id = 0
+    try:
+        my_id = (await _bot.get_me()).id
+    except Exception:
+        pass
+    chat = None
+    err = ""
+    try:
+        chat = await _bot.join_chat(ref)
+        err = ""
+    except Exception as exc:
+        err = str(exc) or type(exc).__name__
+        try:
+            chat = await _bot.get_chat(ref)
+        except Exception:
+            chat = None
+    if chat is None:
+        return {"ok": False, "error": _friendly_join_error(err)}
+    ctype = getattr(chat, "type", "") or str(chat.type)
+    is_group = ctype in ("group", "supergroup")
+    status = ""
+    if my_id:
+        try:
+            member = await _bot.get_chat_member(chat_id=chat.id, user_id=my_id)
+            status = member.status
+        except Exception:
+            pass
+    is_admin = status in ("administrator", "creator")
+    joined = status in ("creator", "administrator", "member", "restricted")
+    kind = ""
+    if parsed["kind"] == "public":
+        kind = "public_group" if is_group else "public_channel"
+    elif parsed["kind"] == "private":
+        kind = "private_group" if is_group else "private_channel"
+    else:
+        kind = "unknown"
+    return {
+        "ok": True,
+        "chat_id": chat.id,
+        "title": getattr(chat, "title", "") or "",
+        "kind": kind,
+        "bot_status": status,
+        "bot_admin": is_admin,
+        "joined": joined,
+    }
+
+
+async def _channel_generate_link(link: str) -> dict:
+    """يتأكد من دخول البوت ثم يولّد رابط دخول (دعوة) جديداً للقناة/المجموعة.
+    يتطلب أن يكون البوت أدمنًا داخل القناة/المجموعة."""
+    joined = await _channel_join(link)
+    if not joined["ok"]:
+        return joined
+    if not joined["bot_admin"]:
+        return {
+            "ok": False,
+            "error": "البوت ليس أدمنًا داخل هذه القناة/المجموعة — لا يمكن توليد رابط دعوة جديدة دون صلاحية أدمن.",
+        }
+    try:
+        created = await _bot.create_chat_invite_link(joined["chat_id"])
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": "فشل توليد رابط الدعوة: " + (str(exc) or type(exc).__name__),
+        }
+    return {
+        "ok": True,
+        "link": created.invite_link,
+        "chat_id": joined["chat_id"],
+        "title": joined["title"],
+        "kind": joined["kind"],
+    }
+
+
+def channel_join(link: str) -> dict:
+    """نسخة متزامنة يُستدعاها الخادم (Flask) لدخول/تحليل قناة مشترٍ."""
+    if _bot is None or _loop is None:
+        return {"ok": False, "error": "البوت غير متصل حالياً."}
+    future = asyncio.run_coroutine_threadsafe(_channel_join(link), _loop)
+    try:
+        return future.result(30)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": "تعذر تنفيذ العملية على القناة: "
+            + (str(exc) or type(exc).__name__),
+        }
+
+
+def channel_generate_link(link: str) -> dict:
+    """نسخة متزامنة لتوليد رابط دخول جديد (دعوة) لقناة/مجموعة مشترٍ."""
+    if _bot is None or _loop is None:
+        return {"ok": False, "error": "البوت غير متصل حالياً."}
+    future = asyncio.run_coroutine_threadsafe(_channel_generate_link(link), _loop)
+    try:
+        return future.result(30)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": "تعذر توليد رابط الدخول: "
+            + (str(exc) or type(exc).__name__),
+        }

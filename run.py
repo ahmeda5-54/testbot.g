@@ -28,6 +28,11 @@ async def _supervise() -> None:
             raise
         except Exception as exc:
             print(f"[main] bot crashed: {exc!r}; restarting in 5s", flush=True)
+            try:
+                import db
+                db.add_diag("bot:supervisor", f"{type(exc).__name__}: {exc}")
+            except Exception:
+                pass
             await asyncio.sleep(5)
 
 
@@ -38,6 +43,13 @@ def main() -> None:
     # مهم قبل بدء اللوحة: يطبق إعدادات معالج الإعداد الأول المخزنة في DB
     # (البائع/المشتري يضبط كل شيء من /setup دون لمس ملف .env)
     config.apply_db_overrides()
+
+    # منع سباق الاستيراد: اللوحة (خيط) والبوت (الخيط الرئيسي) كلاهما يستورد
+    # aiogram — إن بدآ معاً يعلّقان (ModuleLock deadlock). نحمّل كل السلاسل
+    # هنا في الخيط الرئيسي قبل تشغيل خيط اللوحة.
+    import aiogram  # noqa: F401
+    from bot import flow, texts  # noqa: F401
+    import bot.main  # noqa: F401
 
     threading.Thread(target=run_dashboard, daemon=True).start()
     print(

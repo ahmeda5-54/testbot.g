@@ -24,14 +24,114 @@ def _digest(code):
 
 
 def validate(code, secret=None):
-    entered = (code or "").strip()
+    entered = (code or "").strip().upper()
     trial, permanent = config.activation_codes()
-    if not trial or not permanent or trial == permanent:
+    candidates = []
+    if trial:
+        candidates.append((TYPE_TRIAL, trial))
+    if permanent:
+        candidates.append((TYPE_PERMANENT, permanent))
+    # أكواد البيع المخزنة التي يُنشئها البائع من صفحة المدير — تبقى صالحة دائماً
+    try:
+        import db as _db
+        for row in _db.list_license_codes():
+            candidates.append((row["kind"], row["code"]))
+    except Exception:
+        pass
+    if not candidates:
         return None
-    for kind, expected in ((TYPE_TRIAL, trial), (TYPE_PERMANENT, permanent)):
+    for kind, expected in candidates:
         if hmac.compare_digest(entered.encode(), expected.encode()):
             return {"kind": kind, "code": entered}
     return None
+
+
+def list_codes_with_usage():
+    """كل أكواد البيع (الثابتة + المخزنة) مع حالة استعمالها للوحة المدير:
+    هل شُغّلت؟ متى؟ كم تبقّى من وقتها أو صار؟"""
+    import db as _db
+    trial, permanent = config.activation_codes()
+    env_codes = {}
+    if trial:
+        env_codes[trial] = TYPE_TRIAL
+    if permanent:
+        env_codes[permanent] = TYPE_PERMANENT
+    rows = []
+    seen = set()
+    for code, kind in env_codes.items():
+        seen.add(code)
+        rows.append({"code": code, "kind": kind, "note": "(ثابت)", "stored": False})
+    for row in _db.list_license_codes():
+        if row["code"] in seen:
+            continue
+        seen.add(row["code"])
+        rows.append({
+            "code": row["code"], "kind": row["kind"],
+            "note": row.get("note", ""), "stored": True,
+        })
+    now = _now()
+    with _db.get_connection() as conn:
+        _ledger(conn)
+        uses = {
+            r["code_hash"]: dict(r)
+            for r in conn.execute("SELECT * FROM license_uses").fetchall()
+        }
+    for row in rows:
+        u = uses.get(_digest(row["code"]))
+        row["used"] = bool(u)
+        row["first_used"] = u["first_used"] if u else None
+        row["expires"] = u["expires"] if u else 0
+        row["last_seen"] = u["last_seen"] if u else None
+        row["buyer_name"] = (u["buyer_name"] if u else "") or ""
+        row["has_password"] = bool(u and u["password_hash"])
+        row["login_count"] = int((u["login_count"] if u else 0) or 0)
+        row["last_login"] = u["last_login"] if u else None
+        row["last_ip"] = (u["last_ip"] if u else "") or ""
+        row["fail_count"] = int((u["fail_count"] if u else 0) or 0)
+        if u:
+            expired = bool(u["expired"]) or (u["kind"] == TYPE_TRIAL and now >= u["expires"])
+            row["expired"] = expired
+            if u["kind"] == TYPE_TRIAL:
+                row["remaining"] = max(0, u["expires"] - now)
+            else:
+                row["remaining"] = None
+        else:
+            row["expired"] = False
+            row["remaining"] = None
+    return rows
+
+
+def buyers_count() -> int:
+    """عدد المشترين الفعليين = عدد الأكواد التي استُعملت (سجل أول استعمال لا يُمحى)."""
+    import db as _db
+    with _db.get_connection() as conn:
+        _ledger(conn)
+        row = conn.execute("SELECT COUNT(*) AS c FROM license_uses").fetchone()
+        return int(row["c"]) if row else 0
+
+
+def new_sale_code(kind: str, note: str = "") -> str:
+    """يولّد كود بيع جديداً فريداً من صفحة المدير ويخزّنه."""
+    import string
+    import secrets as _secrets
+    import db as _db
+    kind = kind if kind == TYPE_PERMANENT else TYPE_TRIAL
+    alphabet = string.ascii_uppercase + string.digits
+    existing = set()
+    trial, permanent = config.activation_codes()
+    if trial:
+        existing.add(trial)
+    if permanent:
+        existing.add(permanent)
+    for row in _db.list_license_codes():
+        existing.add(row["code"])
+    for _ in range(50):
+        tail = "".join(_secrets.choice(alphabet) for _ in range(10))
+        code = f"{'T' if kind == TYPE_TRIAL else 'P'}-{tail}"
+        if code not in existing:
+            _db.add_license_code(code, kind, note)
+            return code
+    raise RuntimeError("تعذر توليد كود فريد.")
 
 
 def _ledger(conn):
@@ -41,6 +141,78 @@ def _ledger(conn):
         first_used INTEGER NOT NULL, expires INTEGER NOT NULL,
         last_seen INTEGER NOT NULL, expired INTEGER NOT NULL DEFAULT 0
     )""")
+    cols = [r["name"] for r in conn.execute("PRAGMA table_info(license_uses)").fetchall()]
+    if "buyer_name" not in cols:
+        conn.execute("ALTER TABLE license_uses ADD COLUMN buyer_name TEXT NOT NULL DEFAULT ''")
+    if "password_hash" not in cols:
+        conn.execute("ALTER TABLE license_uses ADD COLUMN password_hash TEXT")
+    if "login_count" not in cols:
+        conn.execute("ALTER TABLE license_uses ADD COLUMN login_count INTEGER NOT NULL DEFAULT 0")
+    if "last_login" not in cols:
+        conn.execute("ALTER TABLE license_uses ADD COLUMN last_login INTEGER NOT NULL DEFAULT 0")
+    if "last_ip" not in cols:
+        conn.execute("ALTER TABLE license_uses ADD COLUMN last_ip TEXT NOT NULL DEFAULT ''")
+    if "fail_count" not in cols:
+        conn.execute("ALTER TABLE license_uses ADD COLUMN fail_count INTEGER NOT NULL DEFAULT 0")
+
+
+def _password_hash(code: str, password: str) -> str:
+    """بصمة كلمة مرور المشتري مربوطة بكوده (الكود نفسه هو الملح — يملكه المشتري)."""
+    return hashlib.sha256(f"{code}::{password}".encode("utf-8")).hexdigest()
+
+
+def buyer_account(code: str):
+    """حالة حساب الكود عبر المالك/المشتري: هل استُعمل؟ هل ضُبطت كلمته؟ هل انتهى؟
+    يُستعمل في شاشة الدخول لتمييز أول دخول (تسجيل) عن الدخول اللاحق."""
+    info = validate(code)
+    if info is None:
+        return None
+    import db as _db
+    now = _now()
+    digest = _digest(info["code"])
+    with _db.get_connection() as conn:
+        _ledger(conn)
+        row = conn.execute("SELECT * FROM license_uses WHERE code_hash = ?", (digest,)).fetchone()
+    used = bool(row)
+    expired = False
+    if row:
+        expired = bool(row["expired"]) or (
+            info["kind"] == TYPE_TRIAL and now >= row["expires"]
+        )
+    return {
+        "code": info["code"],
+        "kind": info["kind"],
+        "used": used,
+        "expired": expired,
+        "first_used": row["first_used"] if row else None,
+        "expires": row["expires"] if row else 0,
+        "last_seen": row["last_seen"] if row else None,
+        "buyer_name": (row["buyer_name"] if row else "") or "",
+        "has_password": bool(row and row["password_hash"]),
+        "login_count": int((row["login_count"] if row else 0) or 0),
+        "last_login": row["last_login"] if row else None,
+        "last_ip": (row["last_ip"] if row else "") or "",
+        "fail_count": int((row["fail_count"] if row else 0) or 0),
+    }
+
+
+def register_buyer(code: str, password: str, name: str = "") -> tuple:
+    """أول دخول بكود نشط (لا كلمة مرور بعد): يطبّق الترخيص ويربط كلمة مرور بسيطة
+    بالكود مع اسم المشتري. تكملة أي كود تجريبي منتهٍ مرفوضة هنا."""
+    info = validate(code)
+    if info is None:
+        return False, "الكود غير صالح أو إعداد الأكواد غير مكتمل."
+    ok, msg = apply_code(info["code"])
+    if not ok:
+        return ok, msg
+    import db as _db
+    with _db.get_connection() as conn:
+        _ledger(conn)
+        conn.execute(
+            "UPDATE license_uses SET password_hash = ?, buyer_name = ? WHERE code_hash = ?",
+            (_password_hash(info["code"], password), (name or "")[:80], _digest(info["code"])),
+        )
+    return True, msg
 
 
 def state():
@@ -129,3 +301,98 @@ def apply_code(code):
     if info["kind"] == TYPE_TRIAL:
         return True, "تم التفعيل بصلاحيات كاملة حتى مرور 24 ساعة من أول استعمال لهذا الكود."
     return True, "تم تفعيل النسخة الدائمة بصلاحيات كاملة بلا انتهاء."
+
+
+# ── تشخيص المشترين (لمرصد المدير) ──────────────────────────────
+
+
+def digest(code: str) -> str:
+    """بصمة كود مشتري (عامة) — لربط سجلات التشخيص وروابط الدخول بالكود."""
+    return _digest((code or "").strip().upper())
+
+
+def bump_buyer_login(code: str, ip: str = "") -> None:
+    """يُسجّل دخولاً ناجحاً للمشتري: يزيد عدّاد الدخول ويثبّت وقت/عنوان آخر دخول."""
+    import db as _db
+    with _db.get_connection() as conn:
+        _ledger(conn)
+        conn.execute(
+            "UPDATE license_uses SET login_count = login_count + 1, "
+            "last_login = ?, last_ip = ?, last_seen = ? WHERE code_hash = ?",
+            (_now(), (ip or "")[:64] or "", _now(), digest(code)),
+        )
+        conn.commit()
+
+
+def note_buyer_fail(code: str) -> None:
+    """يُسجّل محاولة دخول فاشلة يُمكن نسبتها لكود معروف (كود منتهٍ مثلاً)."""
+    import db as _db
+    with _db.get_connection() as conn:
+        _ledger(conn)
+        conn.execute(
+            "UPDATE license_uses SET fail_count = fail_count + 1 WHERE code_hash = ?",
+            (digest(code),),
+        )
+        conn.commit()
+
+
+def diag_for_code(code: str, section: str, message: str) -> None:
+    """سجل تشخيصي مربوط بكود مشتٍر محدد — يظهر في قسم تشخيصه في صفحة المدير."""
+    import db as _db
+    _db.add_diag(section, message, code_hash=digest(code))
+
+
+# ── روابط الدخول المباشر (من أي قناة/مجموعة/خاص) ──────────────
+
+
+def create_login_link(code: str) -> str:
+    """يُنشئ/يجدّد رابط دخول مباشر نشطاً لكود — يرجع الرمز token (يوقف أي رابط سابق)."""
+    import secrets as _secrets
+    import db as _db
+    info = validate(code)
+    if info is None:
+        raise ValueError("الكود غير صالح.")
+    token = _secrets.token_hex(16)
+    _db.upsert_login_link(digest(info["code"]), token)
+    return token
+
+
+def active_link_token(code: str) -> str | None:
+    """رمز الرابط النشط لكود (بدون '/' — البناء الكامل في اللوحة)، أو None."""
+    import db as _db
+    info = validate(code)
+    if info is None:
+        return None
+    row = _db.get_active_login_link(digest(info["code"]))
+    return row["token"] if row else None
+
+
+def revoke_login_link(code: str) -> int:
+    """يوقف روابط الدخول النشطة لكود — يرجع عدد ما أُوقف (0 = لم يوجد رابط)."""
+    import db as _db
+    info = validate(code)
+    if info is None:
+        return 0
+    return _db.revoke_login_link(digest(info["code"]))
+
+
+def code_by_digest(digest: str) -> str | None:
+    """من بصمة الكود إلى الكود نفسه (الثابتة والمخزنة) — للدخول عبر رابط مباشر."""
+    import db as _db
+    trial, permanent = config.activation_codes()
+    for code in (permanent, trial):
+        if code and _digest(code) == digest:
+            return code
+    for row in _db.list_license_codes():
+        if _digest(row["code"]) == digest:
+            return row["code"]
+    return None
+
+
+def redeem_login_link(token: str) -> str | None:
+    """يستبدل رمز الرابط بكود المشتري المرتبط، أو None إن كان الرابط موقوفاً/خاطئاً."""
+    import db as _db
+    row = _db.redeem_login_link(token)
+    if row is None:
+        return None
+    return code_by_digest(row["code_hash"])
