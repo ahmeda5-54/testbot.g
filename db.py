@@ -181,7 +181,8 @@ CREATE TABLE IF NOT EXISTS license_codes (
     code TEXT PRIMARY KEY,
     kind TEXT NOT NULL,
     note TEXT NOT NULL DEFAULT '',
-    createdAt TEXT NOT NULL
+    createdAt TEXT NOT NULL,
+    duration_hours INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS diag_logs (
@@ -289,6 +290,7 @@ def init_db() -> None:
         _migrate_template_type_column(conn)
         _migrate_template_keywords_column(conn)
         _migrate_diag_code_column(conn)
+        _migrate_license_duration_column(conn)
 
 
 def _migrate_template_type_column(conn: sqlite3.Connection) -> None:
@@ -339,6 +341,15 @@ def _migrate_diag_code_column(conn: sqlite3.Connection) -> None:
     cols = [row["name"] for row in conn.execute("PRAGMA table_info(diag_logs)")]
     if "code_hash" not in cols:
         conn.execute("ALTER TABLE diag_logs ADD COLUMN code_hash TEXT NOT NULL DEFAULT ''")
+
+
+def _migrate_license_duration_column(conn: sqlite3.Connection) -> None:
+    """يضيف عمود مدة الصلاحية لأكواد البيع (0 = النوع الافتراضي: تجريبي 24 ساعة / دائم بلا انتهاء)."""
+    cols = [row["name"] for row in conn.execute("PRAGMA table_info(license_codes)")]
+    if "duration_hours" not in cols:
+        conn.execute(
+            "ALTER TABLE license_codes ADD COLUMN duration_hours INTEGER NOT NULL DEFAULT 0"
+        )
 
 
 def get_setting(key: str, default: str = "") -> str:
@@ -1819,13 +1830,16 @@ def clear_diag_logs() -> int:
 # ── أكواد البيع (يولّدها البائع من صفحة المدير) ─────────────
 
 
-def add_license_code(code: str, kind: str, note: str = "") -> None:
-    """يدرج كود بيع جديد يولّده البائع — يظل صالحاً عبر عمليات إعادة التهيئة."""
+def add_license_code(code: str, kind: str, note: str = "", duration_hours: int = 0) -> None:
+    """يدرج كود بيع جديد يولّده البائع — يظل صالحاً عبر عمليات إعادة التهيئة.
+    duration_hours: مدة الصلاحية بالساعات بدءاً من أول استعمال (0 = النوع الافتراضي)."""
     with get_connection() as conn:
         conn.execute(
-            "INSERT INTO license_codes (code, kind, note, createdAt) VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(code) DO UPDATE SET kind = excluded.kind, note = excluded.note",
-            (code.strip(), kind, note.strip()[:200], now_iso()),
+            "INSERT INTO license_codes (code, kind, note, createdAt, duration_hours) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(code) DO UPDATE SET kind = excluded.kind, note = excluded.note, "
+            "duration_hours = excluded.duration_hours",
+            (code.strip(), kind, note.strip()[:200], now_iso(), int(duration_hours or 0)),
         )
 
 

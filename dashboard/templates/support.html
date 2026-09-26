@@ -74,7 +74,7 @@
     <a class="btn btn-sm" href="{{ url_for('support_export_csv', type=msg_type, status=status, q=q, priority=priority) }}">⬇️ تصدير CSV</a>
   </form>
   <form class="inline-form" method="post" action="{{ url_for('support_cleanup_old') }}"
-        onsubmit="return confirm('حذف الرسائل المُجاب عنها الأقدم من عدد الأيام؟');">
+        data-confirm="حذف الرسائل المُجاب عنها الأقدم من عدد الأيام؟">
     <label for="cleanup-days" style="font-size:12px; color:var(--muted);">حذف المُجاب عنها الأقدم من</label>
     <input type="number" id="cleanup-days" name="days" value="30" min="1" max="365" style="width:70px;">
     <button class="btn btn-sm" type="submit">🗑 تنظيف</button>
@@ -188,7 +188,7 @@
 
   <div class="card-head-actions">
     <form class="inline-form" method="post" action="{{ url_for('support_ban_user', msg_id=m.id) }}"
-          onsubmit="return confirm('حظر هذا المستخدم من إرسال رسائل الدعم؟');">
+          data-confirm="حظر هذا المستخدم من إرسال رسائل الدعم؟">
       <label for="ban-hours" style="font-size:12px; color:var(--muted);">حظر من الدعم</label>
       <input type="number" id="ban-hours" name="hours" value="24" min="1" max="720" style="width:70px;">
       <span style="font-size:12px; color:var(--muted);">ساعة</span>
@@ -198,7 +198,7 @@
       <button class="btn btn-sm" type="submit">🔓 فك الحظر</button>
     </form>
     <form method="post" action="{{ url_for('support_delete', msg_id=m.id) }}"
-          onsubmit="return confirm('حذف هذه الرسالة نهائياً؟');">
+          data-confirm="حذف هذه الرسالة نهائياً؟" data-danger>
       <button class="btn btn-danger btn-sm" type="submit">🗑 حذف الرسالة</button>
     </form>
   </div>
@@ -232,7 +232,7 @@
       </button>
     </form>
     <form class="inline-form" method="post" action="{{ url_for('support_template_delete', template_id=t.id) }}"
-          onsubmit="return confirm('حذف هذا القالب؟');">
+          data-confirm="حذف هذا القالب؟">
       <button class="btn btn-danger btn-sm" type="submit">✕</button>
     </form>
     {% endfor %}

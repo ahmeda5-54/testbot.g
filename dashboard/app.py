@@ -165,6 +165,25 @@ def _setup_guard():
         "manager_channel_link",
     ):
         return None
+    # جلسة مشترٍ: إن حُذف كوده من صفحة المدير أو انتهت صلاحيته
+    # يُسجَّل خروجه فوراً برسالة واضحة (لا يبقى داخل اللوحة).
+    if session.get("role") == "buyer":
+        buyer_code = session.get("buyer_code", "")
+        account = license_mod.buyer_account(buyer_code) if buyer_code else None
+        if account is None:
+            session.clear()
+            db.add_access_log(
+                "logout", "خروج تلقائي: كود التفعيل محذوف", _client_ip(), _user_agent()
+            )
+            flash("تم حذف كود التفعيل الخاص بك — تم تسجيل خروجك تلقائياً.", "error")
+            return redirect(url_for("login"))
+        if account["expired"]:
+            session.clear()
+            db.add_access_log(
+                "logout", "خروج تلقائي: انتهت صلاحية الكود", _client_ip(), _user_agent()
+            )
+            flash("انتهت صلاحية كود التفعيل الخاص بك — تم تسجيل خروجك تلقائياً.", "error")
+            return redirect(url_for("login"))
     # المدير (البائع) لا يخضع لشرط الترخيص — صفحته مستقلة تماماً.
     if config.license_enforced() and not license_mod.is_valid():
         if session.get("role") != "manager":
@@ -431,11 +450,13 @@ def _license_status_text(st: dict) -> str:
         return "انتهت صلاحية النسخة — أدخل كوداً جديداً لاستئناف العمل."
     if not st["valid"]:
         return "لم تُفعَّل النسخة بعد."
-    if st["trial"]:
+    if st["trial"] or st["expires"]:
         days = st["remaining_days"]
         cap = st["max_members"]
         day_text = f"{days * 24:.1f} ساعة" if days is not None else "—"
-        return f"نشطة (تجريبية) — متبقٍ {day_text}، جميع الصلاحيات بلا حد للأعضاء."
+        if st["trial"]:
+            return f"نشطة (تجريبية) — متبقٍ {day_text}، جميع الصلاحيات بلا حد للأعضاء."
+        return f"نشطة بمدة محددة — متبقٍ {day_text}، جميع الصلاحيات بلا حد للأعضاء."
     cap = st["max_members"]
     cap_text = f"، سقف الأعضاء {cap}" if cap else ""
     who = f" — {st['customer']}" if st["customer"] else ""
@@ -518,6 +539,15 @@ def manager_page():
     codes.sort(key=lambda c: (c["used"], order.get(c["kind"], 9), c["code"]))
     base_url = config.DASHBOARD_PUBLIC_URL or request.host_url.rstrip("/")
     for c in codes:
+        # نص مدة الصلاحية المحدّدة للكود (إن وُجدت)
+        dur = int(c.get("duration_hours") or 0)
+        if dur > 0:
+            if dur % 24 == 0:
+                c["duration_text"] = f"{dur // 24} يوم"
+            else:
+                c["duration_text"] = f"{dur} ساعة"
+        else:
+            c["duration_text"] = ""
         if c["expired"]:
             c["remaining_text"] = "انتهى"
         elif c["used"] and c["remaining"] is not None:
@@ -607,16 +637,31 @@ def _manager_required(f):
 def manager_code_new():
     kind = request.form.get("kind", "").strip().lower()
     note = request.form.get("note", "").strip()
+    duration_raw = request.form.get("duration_hours", "").strip()
+    duration_hours = 0
+    if duration_raw:
+        try:
+            duration_hours = int(duration_raw)
+            if duration_hours <= 0 or duration_hours > 8760 * 5:
+                raise ValueError
+        except ValueError:
+            flash("مدة الصلاحية يجب أن تكون عدد ساعات صحيحاً بين 1 و 5 سنوات.", "error")
+            return redirect(url_for("manager_page"))
     if kind not in ("trial", "permanent"):
         flash("اختر نوع الكود أولاً.", "error")
         return redirect(url_for("manager_page"))
     try:
-        code = license_mod.new_sale_code(kind, note)
+        code = license_mod.new_sale_code(kind, note, duration_hours)
     except RuntimeError as exc:
         flash(str(exc), "error")
         return redirect(url_for("manager_page"))
-    db.add_diag("web:manager", f"توليد كود {kind}: {code}")
-    flash(f"تم توليد كود {('تجريبي' if kind == 'trial' else 'دائم')}: {code}", "success")
+    db.add_diag("web:manager", f"توليد كود {kind}{f' بمدة {duration_hours}h' if duration_hours else ''}: {code}")
+    if duration_hours:
+        days = duration_hours / 24
+        period = f"{days:.0f} يوم" if (days % 1 == 0 and duration_hours % 24 == 0) else f"{duration_hours} ساعة"
+        flash(f"تم توليد كود بصلاحية {period}: {code}", "success")
+    else:
+        flash(f"تم توليد كود {('تجريبي' if kind == 'trial' else 'دائم')}: {code}", "success")
     return redirect(url_for("manager_page"))
 
 

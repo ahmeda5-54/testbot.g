@@ -64,12 +64,11 @@
             {% endfor %}
           </td>
           <td>
-            <form method="post" action="{{ url_for('block_account') }}">
+            <form method="post" action="{{ url_for('block_account') }}" data-confirm="حظر هذا الرقم ومنع تسجيله مستقبلاً في التحقق؟">
               <input type="hidden" name="account" value="{{ g.account }}">
               <input type="hidden" name="next" value="{{ url_for('duplicates_page') }}">
               <input class="search-input" style="width:150px;" name="reason" placeholder="سبب الحظر (اختياري)">
-              <button class="btn btn-danger btn-sm" type="submit"
-                      onclick="return confirm('حظر هذا الرقم ومنع تسجيله مستقبلاً في التحقق؟');">حظر الرقم</button>
+              <button class="btn btn-danger btn-sm" type="submit">حظر الرقم</button>
             </form>
           </td>
         </tr>

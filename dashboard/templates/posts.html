@@ -89,7 +89,7 @@
         {% endif %}
         <div class="pending-actions">
           <form class="inline" method="post" action="{{ url_for('posts_send_now', post_id=post.id) }}"
-                onsubmit="return confirm('نشر هذه الرسالة في القناة الآن؟');">
+                data-confirm="نشر هذه الرسالة في القناة الآن؟">
             <button class="btn btn-sm btn-success" type="submit">🚀 نشر الآن</button>
           </form>
           <form class="inline" method="post" action="{{ url_for('posts_toggle', post_id=post.id) }}">
@@ -98,7 +98,7 @@
             </button>
           </form>
           <form class="inline" method="post" action="{{ url_for('posts_delete', post_id=post.id) }}"
-                onsubmit="return confirm('حذف هذه الرسالة المجدولة نهائياً؟');">
+                data-confirm="حذف هذه الرسالة المجدولة نهائياً؟" data-danger>
             <button class="btn btn-sm btn-danger" type="submit">🗑 حذف</button>
           </form>
         </div>

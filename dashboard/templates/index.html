@@ -22,7 +22,7 @@
       </div>
       <div>
         <form method="post" action="{{ url_for('post_message') }}"
-              onsubmit="return confirm('نشر وتثبيت رسالة التحقق في القناة؟');">
+              data-confirm="نشر وتثبيت رسالة التحقق في القناة؟">
           <button class="btn" type="submit">📌 نشر وتثبيت</button>
         </form>
         <span>رسالة القناة</span>
@@ -218,18 +218,21 @@ document.querySelectorAll('.row-check').forEach(cb => {
   });
 });
 document.querySelectorAll('.batch-bar form').forEach(form => {
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
     const ids = selectedIds();
     if (!ids.length) { e.preventDefault(); return; }
     form.querySelector('.b-ids').value = ids.join(',');
     const reasonInput = form.querySelector('.b-reason');
+    const confirmMsg = form.dataset.confirm;
+    if (!reasonInput && !confirmMsg) return; // إرسال مباشر بلا تأكيد
+    e.preventDefault();
     if (reasonInput) {
-      const reason = prompt('سبب الرفض (يُرسل لجميع المحددين):', '');
-      if (reason === null || !reason.trim()) { e.preventDefault(); return; }
+      const reason = await AppNotify.prompt('سبب الرفض (يُرسل لجميع المحددين):');
+      if (reason === null || !reason.trim()) return;
       reasonInput.value = reason.trim();
     }
-    const confirmMsg = form.dataset.confirm;
-    if (confirmMsg && !confirm(confirmMsg)) { e.preventDefault(); return; }
+    if (confirmMsg && !(await AppNotify.confirm(confirmMsg))) return;
+    form.submit();
   });
 });
 syncBatch();

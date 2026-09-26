@@ -43,7 +43,7 @@
     <input type="text" dir="ltr" name="support_bot_username" value="{{ env.get('SUPPORT_BOT_USERNAME', '') }}" placeholder="support_bot123">
     <button class="btn btn-check" type="submit">حفظ وإعادة تشغيل النظام</button>
   </form>
-  <form class="card settings-form" method="post" action="{{ url_for('restart_app') }}" onsubmit="return confirm('إعادة تشغيل النظام الآن؟');">
+  <form class="card settings-form" method="post" action="{{ url_for('restart_app') }}" data-confirm="إعادة تشغيل النظام الآن؟" data-danger>
     <p class="settings-hint">لإعادة تشغيل البوت واللوحة دون تغيير الإعدادات.</p>
     <button class="btn" type="submit">🔄 إعادة تشغيل النظام فقط</button>
   </form>
@@ -306,7 +306,7 @@ python userbot_sync.py</pre>
         </tbody>
       </table>
     </details>
-    <form method="post" action="{{ url_for('access_logs_clear') }}" onsubmit="return confirm('مسح كل سجلات الدخول؟');">
+    <form method="post" action="{{ url_for('access_logs_clear') }}" data-confirm="مسح كل سجلات الدخول؟">
       <button class="btn" type="submit">🗑 مسح السجل</button>
     </form>
     {% else %}
@@ -341,7 +341,7 @@ python userbot_sync.py</pre>
         </tbody>
       </table>
     </details>
-    <form method="post" action="{{ url_for('admin_actions_clear') }}" onsubmit="return confirm('مسح كل سجل تعديلات الأدمن؟');">
+    <form method="post" action="{{ url_for('admin_actions_clear') }}" data-confirm="مسح كل سجل تعديلات الأدمن؟">
       <button class="btn" type="submit">🗑 مسح السجل</button>
     </form>
     {% else %}
@@ -428,7 +428,7 @@ python userbot_sync.py</pre>
           </td>
           <td>
             <form method="post" action="{{ url_for('faq_delete', rule_id=rule.id) }}"
-                  onsubmit="return confirm('حذف هذا الرد التلقائي؟');" style="display:inline">
+                  data-confirm="حذف هذا الرد التلقائي؟" style="display:inline">
               <button class="btn btn-sm" type="submit">🗑 حذف</button>
             </form>
           </td>
@@ -488,7 +488,7 @@ python userbot_sync.py</pre>
           <td>{{ w.unreachable }}</td>
           <td>
             <form method="post" action="{{ url_for('clone_delete', watch_id=w.id) }}"
-                  onsubmit="return confirm('إيقاف مراقبة هذه القناة؟');" style="display:inline">
+                  data-confirm="إيقاف مراقبة هذه القناة؟" style="display:inline">
               <button class="btn btn-danger btn-sm" type="submit">🗑 إزالة</button>
             </form>
           </td>

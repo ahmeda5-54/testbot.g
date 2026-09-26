@@ -53,13 +53,12 @@
         </form>
         {% else %}
         <form class="note-form" style="border-top:none; padding-top:0;" method="post"
-              action="{{ url_for('block_account') }}">
+              action="{{ url_for('block_account') }}" data-confirm="حظر هذا الرقم ومنع تسجيله مستقبلاً في التحقق؟">
           <input type="hidden" name="account" value="{{ member.tradingAccountNumber }}">
           <input type="hidden" name="next" value="{{ url_for('member_detail', user_id=member.telegramUserId) }}">
           <label for="block_reason">سبب الحظر (اختياري)</label>
           <input id="block_reason" name="reason" placeholder="مثال: رقم مشترك مع حساب آخر نشط">
-          <button class="btn btn-danger" type="submit"
-                  onclick="return confirm('حظر هذا الرقم ومنع تسجيله مستقبلاً في التحقق؟');">🔒 حظر هذا الرقم</button>
+          <button class="btn btn-danger" type="submit">🔒 حظر هذا الرقم</button>
         </form>
         {% endif %}
         {% if other_owners %}
@@ -171,14 +170,14 @@
 
         {% if member.status in ['REJECTED', 'EXPIRED', 'VERIFIED'] %}
         <form method="post" action="{{ url_for('mark_removed', user_id=member.telegramUserId) }}"
-              onsubmit="return confirm('تعليم كمُزال يدوياً من القناة؟');">
+              data-confirm="تعليم كمُزال يدوياً من القناة؟">
           <button class="btn btn-outline">تعليم كإزالة يدوية</button>
         </form>
         {% endif %}
 
         {% if member.status != 'REMOVED' %}
         <form method="post" action="{{ url_for('remove_from_chat', user_id=member.telegramUserId) }}"
-              onsubmit="return confirm('حذف هذا العضو من المجموعة بواسطة البوت؟');">
+              data-confirm="حذف هذا العضو من المجموعة بواسطة البوت؟">
           <button class="btn btn-danger">حذف من المجموعة</button>
         </form>
         {% endif %}
@@ -189,18 +188,18 @@
 
         {% if member.status not in ['REMOVED'] %}
         <form method="post" action="{{ url_for('delete_record', user_id=member.telegramUserId) }}"
-              onsubmit="return confirm('⚠️ حذف السجل نهائياً؟ سيبقى العضو في المجموعة لكن تُمسح كل بياناته ويمكنه البدء من جديد عند الضغط على /start. متابعة؟');">
+              data-confirm="⚠️ حذف السجل نهائياً؟ سيبقى العضو في المجموعة لكن تُمسح كل بياناته ويمكنه البدء من جديد عند الضغط على /start. متابعة؟">
           <button class="btn btn-danger btn-delete-record">🗑 حذف السجل والبدء من جديد</button>
         </form>
         {% endif %}
       </div>
 
       {% if member.status in ['SUBMITTED', 'UNDER_REVIEW'] %}
-      <form class="reject-form" method="post" action="{{ url_for('reject', user_id=member.telegramUserId) }}">
+      <form class="reject-form" method="post" action="{{ url_for('reject', user_id=member.telegramUserId) }}"
+        data-confirm="تأكيد رفض هذا الطلب؟" data-danger>
         <label for="reason">سبب الرفض</label>
         <textarea id="reason" name="reason" rows="2" required placeholder="اكتب سبب الرفض..."></textarea>
-        <button class="btn btn-danger" type="submit"
-                onclick="return confirm('تأكيد رفض هذا الطلب؟');">✖ رفض</button>
+        <button class="btn btn-danger" type="submit">✖ رفض</button>
       </form>
       {% endif %}
     </section>

@@ -202,6 +202,38 @@ a:hover{opacity:.9}
 .flash.hide{opacity:0;transform:translateY(-6px)}
 .toast{position:fixed;bottom:calc(24px + env(safe-area-inset-bottom,0px));left:50%;transform:translate(-50%,30px);opacity:0;padding:12px 20px;border-radius:14px;font-size:14px;z-index:9;color:var(--tx);background:var(--glass2);border:1px solid var(--line);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);transition:.3s;pointer-events:none}
 .toast.show{opacity:1;transform:translate(-50%,0)}
+/* نظام الإشعارات الداخلية (توست + مودال تأكيد/إدخال) — بديل نوافذ المتصفح */
+.nd-host{position:fixed;bottom:calc(20px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);z-index:150;display:flex;flex-direction:column;align-items:center;gap:10px;width:min(92vw,460px);pointer-events:none}
+.nd-toast{pointer-events:auto;width:100%;display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border-radius:14px;background:var(--glass2);border:1px solid var(--line);box-shadow:var(--sh);-webkit-backdrop-filter:blur(22px);backdrop-filter:blur(22px);animation:ndIn .28s ease;font-size:13.5px;line-height:1.7;transition:opacity .25s,transform .25s}
+.nd-toast.nd-out{opacity:0;transform:translateY(16px)}
+.nd-toast .nd-ic{flex:none;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;margin-top:1px}
+.nd-toast .nd-ic svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.nd-toast.nd-success .nd-ic{background:color-mix(in srgb,var(--ok) 20%,transparent);color:var(--ok)}
+.nd-toast.nd-error .nd-ic{background:color-mix(in srgb,var(--bad) 20%,transparent);color:var(--bad)}
+.nd-toast.nd-warn .nd-ic{background:color-mix(in srgb,var(--warn) 22%,transparent);color:var(--warn)}
+.nd-toast.nd-message .nd-ic{background:color-mix(in srgb,var(--acc) 22%,transparent);color:var(--acc)}
+.nd-toast.nd-success{border-color:color-mix(in srgb,var(--ok) 45%,transparent)}
+.nd-toast.nd-error{border-color:color-mix(in srgb,var(--bad) 45%,transparent)}
+.nd-toast.nd-warn{border-color:color-mix(in srgb,var(--warn) 45%,transparent)}
+.nd-toast.nd-message{border-color:color-mix(in srgb,var(--acc) 45%,transparent)}
+.nd-toast .nd-tx{flex:1;word-break:break-word}
+.nd-toast .nd-x{all:unset;cursor:pointer;flex:none;padding:2px 7px;border-radius:8px;font-size:12px;opacity:.75;color:var(--mut)}
+.nd-toast .nd-x:hover{opacity:1;color:var(--tx);background:var(--glass)}
+@keyframes ndIn{from{opacity:0;transform:translateY(18px) scale(.96)}to{opacity:1;transform:translateY(0) scale(1)}}
+.nd-mask{position:fixed;inset:0;z-index:200;display:grid;place-items:center;padding:20px;background:rgba(4,8,22,.55);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);animation:ndFade .2s ease}
+.nd-modal{width:min(420px,92vw);background:linear-gradient(160deg,#111a33,#0c1226);border:1px solid var(--line);border-radius:18px;box-shadow:0 24px 70px rgba(0,0,0,.55);padding:22px;animation:ndPop .22s ease;font-size:14px}
+.nd-modal-title{font-size:16px;font-weight:700;margin-bottom:8px;color:var(--tx)}
+.nd-modal-body{font-size:13.5px;line-height:1.9;color:var(--mut);white-space:pre-line;margin-bottom:6px}
+.nd-modal-input{width:100%;padding:11px 14px;border-radius:12px;border:1px solid var(--line);background:var(--glass);color:var(--tx);font-size:13.5px;font-family:inherit;margin-top:10px}
+.nd-modal-input:focus{outline:none;border-color:var(--acc)}
+.nd-modal-actions{display:flex;gap:10px;justify-content:flex-start;margin-top:18px}
+.nd-modal-actions .nd-btn{all:unset;box-sizing:border-box;cursor:pointer;padding:9px 22px;border-radius:12px;font-size:13.5px;font-weight:600;text-align:center;transition:.2s;border:1px solid var(--line)}
+.nd-modal-actions .nd-btn:hover{filter:brightness(1.12)}
+.nd-btn.nd-cancel{background:var(--glass);color:var(--mut)}
+.nd-btn.nd-ok{background:var(--acc);color:#fff;border-color:transparent!important}
+.nd-btn.nd-ok.danger{background:var(--bad);color:#fff;border-color:transparent!important}
+@keyframes ndFade{from{opacity:0}to{opacity:1}}
+@keyframes ndPop{from{opacity:0;transform:scale(.94) translateY(10px)}to{opacity:1;transform:scale(1) translateY(0)}}
 /* login / restart */
 .login-body{min-height:100vh;display:grid;place-items:center;padding:22px;overflow:auto;position:relative}
 

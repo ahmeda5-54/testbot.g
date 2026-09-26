@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/glass.css') }}?v=6">
+  <script src="{{ url_for('static', filename='js/notify.js') }}?v=2"></script>
 </head>
 <body class="manager-body">
   <div class="orb a"></div><div class="orb b"></div><div class="orb c"></div>
@@ -47,7 +48,7 @@
         </p>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <form method="post" action="{{ url_for('reset_store') }}"
-                onsubmit="return confirm('تحذير! سيتم مسح كل الأعضاء والرسائل والسجلات والإعدادات استعداداً لعميل جديد. هل أنت متأكد؟');">
+                data-confirm="تحذير! سيتم مسح كل الأعضاء والرسائل والسجلات والإعدادات استعداداً لعميل جديد. هل أنت متأكد؟" data-danger>
             <button class="btn" type="submit" style="background:#3f1620;color:#fca5a5;border:1px solid rgba(239,68,68,.4)">🗑️ إعادة تهيئة لعميل جديد</button>
           </form>
         </div>
@@ -84,9 +85,14 @@
           <option value="trial">تجريبي — 24 ساعة من أول استعمال</option>
           <option value="permanent">دائم — بلا انتهاء</option>
         </select>
+        <label>مدة الصلاحية (اختياري — بالساعات)</label>
+        <input type="number" name="duration_hours" min="1" max="43800" step="1"
+               placeholder="اتركه فارغاً للافتراضي (تجريبي 24 ساعة / دائم بلا انتهاء)"
+               title="عدد ساعات الصلاحية من أول استعمال — مثال: 168 = أسبوع، 720= شهر">
         <label>ملاحظة (اختياري — اسم المشتري/العميل)</label>
         <input type="text" name="note" maxlength="200" placeholder="مثال: عميل فلان">
         <button class="btn btn-check" type="submit">توليد الكود</button>
+        <p class="settings-hint" style="margin:6px 0 0">بإمكانك تحديد مدة لأي نوع: كود «دائم» بمدة محددة = اشتراك بصلاحية تلك المدة ثم ينتهي.</p>
       </form>
 
       <div class="card">
@@ -109,6 +115,7 @@
                 <td>
                   {% if c.kind == 'permanent' %}<span class="chip chip-ok">دائم</span>
                   {% else %}<span class="chip chip-warn">تجريبي</span>{% endif %}
+                  {% if c.duration_text %}<div style="margin-top:3px;font-size:12px;color:var(--mut)">مدة محددة: {{ c.duration_text }}</div>{% endif %}
                 </td>
                 <td>{{ c.buyer_name or (c.note if c.stored else '') or '—' }}</td>
                 <td>
@@ -121,7 +128,7 @@
                 <td>
                   {% if c.stored %}
                   <form method="post" action="{{ url_for('manager_code_delete') }}"
-                        onsubmit="return confirm('حذف هذا الكود نهائياً؟');" style="display:inline">
+                        data-confirm="حذف هذا الكود نهائياً؟" style="display:inline" data-danger>
                     <input type="hidden" name="code" value="{{ c.code }}">
                     <button class="btn btn-sm" type="submit">🗑</button>
                   </form>
@@ -334,7 +341,7 @@
           </table>
         </details>
         <form method="post" action="{{ url_for('manager_diag_clear') }}"
-              onsubmit="return confirm('مسح كل سجل التشخيص؟');">
+              data-confirm="مسح كل سجل التشخيص؟">
           <button class="btn" type="submit">🗑 مسح السجل</button>
         </form>
         {% else %}

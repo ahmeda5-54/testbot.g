@@ -28,21 +28,21 @@ def validate(code, secret=None):
     trial, permanent = config.activation_codes()
     candidates = []
     if trial:
-        candidates.append((TYPE_TRIAL, trial))
+        candidates.append((TYPE_TRIAL, trial, 0))
     if permanent:
-        candidates.append((TYPE_PERMANENT, permanent))
+        candidates.append((TYPE_PERMANENT, permanent, 0))
     # أكواد البيع المخزنة التي يُنشئها البائع من صفحة المدير — تبقى صالحة دائماً
     try:
         import db as _db
         for row in _db.list_license_codes():
-            candidates.append((row["kind"], row["code"]))
+            candidates.append((row["kind"], row["code"], int(row.get("duration_hours") or 0)))
     except Exception:
         pass
     if not candidates:
         return None
-    for kind, expected in candidates:
+    for kind, expected, duration_hours in candidates:
         if hmac.compare_digest(entered.encode(), expected.encode()):
-            return {"kind": kind, "code": entered}
+            return {"kind": kind, "code": entered, "duration_hours": int(duration_hours or 0)}
     return None
 
 
@@ -60,7 +60,7 @@ def list_codes_with_usage():
     seen = set()
     for code, kind in env_codes.items():
         seen.add(code)
-        rows.append({"code": code, "kind": kind, "note": "(ثابت)", "stored": False})
+        rows.append({"code": code, "kind": kind, "note": "(ثابت)", "stored": False, "duration_hours": 0})
     for row in _db.list_license_codes():
         if row["code"] in seen:
             continue
@@ -68,6 +68,7 @@ def list_codes_with_usage():
         rows.append({
             "code": row["code"], "kind": row["kind"],
             "note": row.get("note", ""), "stored": True,
+            "duration_hours": int(row.get("duration_hours") or 0),
         })
     now = _now()
     with _db.get_connection() as conn:
@@ -89,9 +90,10 @@ def list_codes_with_usage():
         row["last_ip"] = (u["last_ip"] if u else "") or ""
         row["fail_count"] = int((u["fail_count"] if u else 0) or 0)
         if u:
-            expired = bool(u["expired"]) or (u["kind"] == TYPE_TRIAL and now >= u["expires"])
+            # منتهي: إمّا مُعلَّم منتهياً صراحةً، أو تجاوزنا موعد انتهائه الفعلي
+            expired = bool(u["expired"]) or (u["expires"] > 0 and now >= u["expires"])
             row["expired"] = expired
-            if u["kind"] == TYPE_TRIAL:
+            if u["expires"] > 0:
                 row["remaining"] = max(0, u["expires"] - now)
             else:
                 row["remaining"] = None
@@ -110,8 +112,9 @@ def buyers_count() -> int:
         return int(row["c"]) if row else 0
 
 
-def new_sale_code(kind: str, note: str = "") -> str:
-    """يولّد كود بيع جديداً فريداً من صفحة المدير ويخزّنه."""
+def new_sale_code(kind: str, note: str = "", duration_hours: int = 0) -> str:
+    """يولّد كود بيع جديداً فريداً من صفحة المدير ويخزّنه.
+    duration_hours: مدة صلاحية مخصصة بالساعات من أول استعمال (0 = النوع الافتراضي)."""
     import string
     import secrets as _secrets
     import db as _db
@@ -129,7 +132,7 @@ def new_sale_code(kind: str, note: str = "") -> str:
         tail = "".join(_secrets.choice(alphabet) for _ in range(10))
         code = f"{'T' if kind == TYPE_TRIAL else 'P'}-{tail}"
         if code not in existing:
-            _db.add_license_code(code, kind, note)
+            _db.add_license_code(code, kind, note, int(duration_hours or 0))
             return code
     raise RuntimeError("تعذر توليد كود فريد.")
 
@@ -176,8 +179,9 @@ def buyer_account(code: str):
     used = bool(row)
     expired = False
     if row:
+        # انتهى: إمّا مُعلَّم منتهياً، أو تجاوزنا موعد الانتهاء الفعلي (أي كود له موعد)
         expired = bool(row["expired"]) or (
-            info["kind"] == TYPE_TRIAL and now >= row["expires"]
+            row["expires"] > 0 and now >= row["expires"]
         )
     return {
         "code": info["code"],
@@ -229,11 +233,12 @@ def state():
                            (_digest(code),)).fetchone()
         if row and row["kind"] == kind:
             expires = row["expires"]
-            if kind == TYPE_PERMANENT:
+            if kind == TYPE_PERMANENT and expires == 0:
                 valid = True
-            elif kind == TYPE_TRIAL:
+            else:
+                # أي كود له موعد انتهاء فعلي (تجريبي أو دائم بمدة محددة) يخضع لنفس الفحص
                 effective_now = max(now, row["last_seen"])
-                expired = bool(row["expired"] or effective_now >= expires)
+                expired = bool(row["expired"] or (expires > 0 and effective_now >= expires))
                 valid = not expired
                 if expired and not row["expired"] or effective_now - row["last_seen"] >= 60:
                     conn.execute("UPDATE license_uses SET last_seen = ?, expired = ? WHERE code_hash = ?",
@@ -274,6 +279,7 @@ def apply_code(code):
         return False, "الكود غير صالح أو إعداد الأكواد غير مكتمل."
     now = _now()
     digest = _digest(info["code"])
+    duration_hours = int(info.get("duration_hours") or 0)
     with db.get_connection() as conn:
         _ledger(conn)
         # Serialize concurrent activations so the first-use timestamp cannot move.
@@ -284,11 +290,16 @@ def apply_code(code):
                 return False, "هذا الكود استُعمل سابقاً لنوع مختلف. استخدم كوداً جديداً."
             expires = row["expires"]
             now = max(now, row["last_seen"])
-            if info["kind"] == TYPE_TRIAL and (row["expired"] or now >= expires):
+            if expires > 0 and (row["expired"] or now >= expires):
                 conn.execute("UPDATE license_uses SET expired = 1, last_seen = ? WHERE code_hash = ?", (now, digest))
-                return False, "انتهت تجربة هذا الكود نهائياً. يلزم كود تجريبي جديد أو الكود الدائم."
+                return False, "انتهت صلاحية هذا الكود — تواصل مع البائع للحصول على كود جديد."
         else:
-            expires = now + TRIAL_SECONDS if info["kind"] == TYPE_TRIAL else 0
+            if duration_hours > 0:
+                expires = now + duration_hours * 3600
+            elif info["kind"] == TYPE_TRIAL:
+                expires = now + TRIAL_SECONDS
+            else:
+                expires = 0
             conn.execute("INSERT INTO license_uses (code_hash, kind, first_used, expires, last_seen) VALUES (?, ?, ?, ?, ?)",
                          (digest, info["kind"], now, expires, now))
         values = {
@@ -298,6 +309,10 @@ def apply_code(code):
             "license_warn_full": "0", "license_warn_none": "0",
         }
         conn.executemany("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", values.items())
+    if duration_hours > 0:
+        hours = duration_hours
+        period = f"{hours / 24:.0f} يوم" if hours % 24 == 0 else f"{hours} ساعة"
+        return True, f"تم التفعيل بنجاح — صلاحية محددة {period} من أول استعمال."
     if info["kind"] == TYPE_TRIAL:
         return True, "تم التفعيل بصلاحيات كاملة حتى مرور 24 ساعة من أول استعمال لهذا الكود."
     return True, "تم تفعيل النسخة الدائمة بصلاحيات كاملة بلا انتهاء."
